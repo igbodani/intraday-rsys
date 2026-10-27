@@ -1,0 +1,80 @@
+# Proposed settings for review; required unresolved fields block market runs.
+schema_version: 1
+status: draft_unresolved
+mode: research
+hypothesis: ORB close-cross improves net outcomes over eligible-time controls.
+decision_refs:
+- D05
+- D06
+- D08
+- D09
+- D10
+- D11
+- D12
+- D13
+- D14
+- D15
+- D16
+- D17
+- D20
+- D21
+capital_usd: '1000.00'
+provider: alpaca
+feed: null
+data_manifest: null
+base_interval_minutes: 1
+data_session: regular
+trading_session: regular
+side: long
+acceptance: mechanical
+account:
+  profile: null
+  quantity_step: null
+  minimum_quantity: null
+  proceeds_availability: null
+risk:
+  fraction_per_trade: null
+  daily_loss_limit_usd: null
+  drawdown_limit_fraction: null
+  max_positions: null
+  max_position_notional_usd: null
+execution:
+  spread_bps: null
+  slippage_bps: null
+  fee_profile: null
+  feed_delay_ms: null
+  decision_latency_ms: null
+  ambiguous_exit: stop_first
+scanner:
+  id: rvol_then_gain_v1
+  top_n: 20
+  lookback_sessions: 20
+  min_prior_dollar_volume: null
+  max_lookback_calendar_sessions: 252
+strategy:
+  id: orb_close_cross_v1
+  range_minutes: 15
+  breakout_buffer_ticks: 1
+  entry_cutoff_local: '11:00'
+  max_fills_per_symbol_day: 1
+exit:
+  target_r: 2
+  maximum_hold_minutes: 60
+  flatten_buffer_minutes: 5
+experiment:
+  development_start: null
+  development_end: null
+  validation_start: null
+  validation_end: null
+  final_start: null
+  final_end: null
+  trial_budget: null
+  seed: null
+promotion_gates: null
+data_adjustment:
+  execution: raw
+  historical_features: splits_effective_and_known_asof
+  symbol_mapping_asof: null
+reporting:
+  ranking_storage: compact
+  measure_storage: true

@@ -1,0 +1,17 @@
+schema_version: 1
+mode: fixture
+evidence_type: synthetic_only
+network_allowed: false
+input: fixtures/cases.json
+initial_cash_default: '1000.00'
+quantity_step: '1'
+price_tick: '0.01'
+cash_model: immediate_fixture_only
+spread: '0'
+slippage: '0'
+fees: '0'
+feed_delay_ms: 0
+decision_latency_ms: 0
+overrides: Each case explicitly overrides its starting state and costs where specified.
+warning: Zero costs and immediate spendability are test simplifications, not research/broker
+  defaults.

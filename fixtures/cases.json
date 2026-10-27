@@ -1,0 +1,802 @@
+{
+  "schema_version": 1,
+  "evidence_type": "hand_calculated_synthetic",
+  "timezone": "America/New_York",
+  "date": "2024-11-29",
+  "notes": [
+    "Each case is independent. Session lengths are supplied explicitly; F06 is the early-close case.",
+    "For direct account tests, proposals/stops/targets are injected; these cases do not assert that ORB or VWAP generated them.",
+    "Same-time input records are processed using the declared phase order, not their JSON list order.",
+    "No borrowing. Immediate cash spendability is a fixture simplification. Explicit whole-share requested quantities may be reduced to fit cash in F05.",
+    "F11\u2013F17 extend accounting coverage; fixture settlement/action events are not claims about real provider behavior."
+  ],
+  "cases": [
+    {
+      "id": "F01",
+      "name": "Entry and profitable target",
+      "initial_cash": "1000.00",
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "5",
+          "signal_price": "100",
+          "stop": "98",
+          "target": "104"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "bar_complete",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "bar_start": "09:31:00",
+          "open": "100",
+          "high": "103",
+          "low": "99",
+          "close": "102",
+          "volume": 1000
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "102"
+        },
+        {
+          "type": "bar_complete",
+          "time_local": "09:33:00",
+          "symbol": "AAA",
+          "bar_start": "09:32:00",
+          "open": "102",
+          "high": "105",
+          "low": "101",
+          "close": "104",
+          "volume": 1000
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "first_entry",
+          "cash": "500",
+          "quantity": "5",
+          "mark": "100",
+          "equity": "1000",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "first_bar_close",
+          "cash": "500",
+          "quantity": "5",
+          "mark": "102",
+          "equity": "1010",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "target_exit",
+          "cash": "1020",
+          "quantity": "0",
+          "mark": "104",
+          "equity": "1020",
+          "realized_pnl": "20"
+        }
+      ],
+      "exit_price": "104"
+    },
+    {
+      "id": "F02",
+      "name": "Both stop and target touched",
+      "initial_cash": "1000",
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "5",
+          "signal_price": "100",
+          "stop": "98",
+          "target": "104"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "bar_complete",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "bar_start": "09:31:00",
+          "open": "100",
+          "high": "105",
+          "low": "97",
+          "close": "101",
+          "volume": 1000
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "stop_exit",
+          "cash": "990",
+          "quantity": "0",
+          "mark": "101",
+          "equity": "990",
+          "realized_pnl": "-10"
+        }
+      ],
+      "exit_price": "98"
+    },
+    {
+      "id": "F03",
+      "name": "Gap through existing stop",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": "104"
+      },
+      "events": [
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "95"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "gap_exit",
+          "cash": "975",
+          "quantity": "0",
+          "mark": "95",
+          "equity": "975",
+          "realized_pnl": "-25"
+        }
+      ],
+      "exit_price": "95"
+    },
+    {
+      "id": "F04",
+      "name": "Cannot afford one whole share with fee",
+      "initial_cash": "100",
+      "costs": {
+        "fixed_entry_fee": "1"
+      },
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "1",
+          "signal_price": "101",
+          "stop": "99",
+          "target": "105"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "rejection",
+          "cash": "100",
+          "quantity": "0",
+          "mark": "101",
+          "equity": "100",
+          "realized_pnl": "0"
+        }
+      ],
+      "rejection": "INSUFFICIENT_CASH"
+    },
+    {
+      "id": "F05",
+      "name": "Equal-rank shared cash tie",
+      "initial_cash": "1000",
+      "sizing": {
+        "per_proposal_risk_budget": "12",
+        "max_quantity": "6",
+        "quantity_step": "1"
+      },
+      "events": [
+        {
+          "type": "simultaneous_proposals",
+          "time_local": "09:31:00",
+          "proposals": [
+            {
+              "symbol": "XYZ",
+              "rvol": "2",
+              "gain": "0.03",
+              "signal_price": "100",
+              "stop": "98"
+            },
+            {
+              "symbol": "ABC",
+              "rvol": "2",
+              "gain": "0.03",
+              "signal_price": "100",
+              "stop": "98"
+            }
+          ]
+        },
+        {
+          "type": "simultaneous_opens",
+          "time_local": "09:31:00",
+          "opens": {
+            "ABC": "100",
+            "XYZ": "100"
+          }
+        }
+      ],
+      "expected_positions": {
+        "ABC": {
+          "quantity": "6",
+          "entry": "100"
+        },
+        "XYZ": {
+          "quantity": "4",
+          "entry": "100"
+        }
+      },
+      "expected_cash": "0",
+      "expected_equity": "1000",
+      "expected_order": [
+        "ABC",
+        "XYZ"
+      ]
+    },
+    {
+      "id": "F06",
+      "name": "Early close flatten",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": "104"
+      },
+      "session": {
+        "open": "09:30:00",
+        "close": "13:00:00",
+        "flatten_buffer_minutes": 5
+      },
+      "events": [
+        {
+          "type": "flatten_timer",
+          "time_local": "12:55:00"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "12:55:00",
+          "symbol": "AAA",
+          "open": "101"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "flatten_exit",
+          "cash": "1005",
+          "quantity": "0",
+          "mark": "101",
+          "equity": "1005",
+          "realized_pnl": "5"
+        }
+      ],
+      "exit_price": "101",
+      "expected_flatten_time": "12:55:00"
+    },
+    {
+      "id": "F07",
+      "name": "Stop update cannot be retroactive",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": null
+      },
+      "events": [
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "bar_complete",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "bar_start": "09:31:00",
+          "open": "100",
+          "high": "102",
+          "low": "99",
+          "close": "101",
+          "volume": 1000
+        },
+        {
+          "type": "stop_change",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "stop": "100"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "99"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "before_stop_change",
+          "cash": "500",
+          "quantity": "5",
+          "mark": "101",
+          "equity": "1005",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "next_open_gap_exit",
+          "cash": "995",
+          "quantity": "0",
+          "mark": "99",
+          "equity": "995",
+          "realized_pnl": "-5"
+        }
+      ],
+      "exit_price": "99"
+    },
+    {
+      "id": "F08",
+      "name": "Costs charged exactly once",
+      "initial_cash": "1000",
+      "costs": {
+        "adverse_slippage_per_share": "0.10",
+        "fixed_fee_each_side": "0.50"
+      },
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "5",
+          "signal_price": "100",
+          "stop": "98",
+          "target": null
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "time_exit_request",
+          "time_local": "09:32:00",
+          "symbol": "AAA"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "102"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "after_entry",
+          "cash": "499",
+          "quantity": "5",
+          "mark": "100",
+          "equity": "999",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "after_exit",
+          "cash": "1008",
+          "quantity": "0",
+          "mark": "102",
+          "equity": "1008",
+          "realized_pnl": "8"
+        }
+      ],
+      "entry_fill": "100.10",
+      "exit_price": "101.90",
+      "total_fees": "1.00",
+      "realized_pnl_note": "Net completed-trade P&L includes both fees; account cash reflects entry fee immediately."
+    },
+    {
+      "id": "F09",
+      "name": "Nonpositive stop distance",
+      "initial_cash": "1000",
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "5",
+          "signal_price": "100",
+          "stop": "100",
+          "target": "104"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "rejection",
+          "cash": "1000",
+          "quantity": "0",
+          "mark": "100",
+          "equity": "1000",
+          "realized_pnl": "0"
+        }
+      ],
+      "rejection": "INVALID_STOP_DISTANCE"
+    },
+    {
+      "id": "F10",
+      "name": "Positive signal latency misses same-time open",
+      "initial_cash": "1000",
+      "decision_latency_ms": 100,
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "1",
+          "signal_price": "100",
+          "stop": "99",
+          "target": "105"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "101"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "first_open_skipped",
+          "cash": "1000",
+          "quantity": "0",
+          "mark": "100",
+          "equity": "1000",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "delayed_entry",
+          "cash": "899",
+          "quantity": "1",
+          "mark": "101",
+          "equity": "1000",
+          "realized_pnl": "0"
+        }
+      ],
+      "expected_entry_time": "09:32:00",
+      "entry_fill": "101"
+    },
+    {
+      "id": "F11",
+      "name": "Accepted entry gaps through stop",
+      "initial_cash": "1000",
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "5",
+          "signal_price": "100",
+          "stop": "98",
+          "target": "104"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "97"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "entry_rejected",
+          "cash": "1000",
+          "quantity": "0",
+          "mark": "97",
+          "equity": "1000",
+          "realized_pnl": "0"
+        }
+      ],
+      "rejection": "ENTRY_THROUGH_STOP",
+      "expected_reserved_cash": "0"
+    },
+    {
+      "id": "F12",
+      "name": "Favorable gap over profit target",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": "104"
+      },
+      "events": [
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "107"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "target_gap_exit",
+          "cash": "1020",
+          "quantity": "0",
+          "mark": "107",
+          "equity": "1020",
+          "realized_pnl": "20"
+        }
+      ],
+      "exit_price": "104",
+      "note": "Conservative target reference; no $107 improvement is credited."
+    },
+    {
+      "id": "F13",
+      "name": "Risk budget includes fixed fees",
+      "initial_cash": "1000",
+      "sizing": {
+        "per_proposal_risk_budget": "10",
+        "quantity_step": "1",
+        "max_quantity": "100"
+      },
+      "costs": {
+        "fixed_entry_fee": "1",
+        "fixed_exit_fee": "1"
+      },
+      "events": [
+        {
+          "type": "risk_sized_proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "signal_price": "100",
+          "stop": "98",
+          "target": "104"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "100"
+        },
+        {
+          "type": "bar_complete",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "bar_start": "09:31:00",
+          "open": "100",
+          "high": "101",
+          "low": "97",
+          "close": "99",
+          "volume": 1000
+        }
+      ],
+      "expected_quantity": "4",
+      "expected_reservation": "401",
+      "expected_initial_stop_risk": "10",
+      "expected": [
+        {
+          "checkpoint": "entry",
+          "cash": "599",
+          "quantity": "4",
+          "mark": "100",
+          "equity": "999",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "stop_exit",
+          "cash": "990",
+          "quantity": "0",
+          "mark": "99",
+          "equity": "990",
+          "realized_pnl": "-10"
+        }
+      ]
+    },
+    {
+      "id": "F14",
+      "name": "One share exceeds cost-aware risk budget",
+      "initial_cash": "1000",
+      "sizing": {
+        "per_proposal_risk_budget": "3",
+        "quantity_step": "1"
+      },
+      "costs": {
+        "fixed_entry_fee": "1",
+        "fixed_exit_fee": "1"
+      },
+      "events": [
+        {
+          "type": "risk_sized_proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "signal_price": "100",
+          "stop": "98",
+          "target": "104"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "rejection",
+          "cash": "1000",
+          "quantity": "0",
+          "mark": "100",
+          "equity": "1000",
+          "realized_pnl": "0"
+        }
+      ],
+      "rejection": "RISK_BUDGET"
+    },
+    {
+      "id": "F15",
+      "name": "Unsettled cash is unavailable until explicit release",
+      "initial_cash": "900",
+      "initial_spendable_cash": "400",
+      "initial_unsettled_cash": "500",
+      "cash_model": "explicit_fixture_settlement",
+      "events": [
+        {
+          "type": "proposal",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "quantity": "1",
+          "signal_price": "500",
+          "stop": "490",
+          "target": "520"
+        },
+        {
+          "type": "settlement_release",
+          "time_local": "09:32:00",
+          "amount": "500"
+        },
+        {
+          "type": "proposal",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "quantity": "1",
+          "signal_price": "500",
+          "stop": "490",
+          "target": "520"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:32:00",
+          "symbol": "AAA",
+          "open": "500"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "first_rejection",
+          "cash": "900",
+          "quantity": "0",
+          "mark": "500",
+          "equity": "900",
+          "realized_pnl": "0"
+        },
+        {
+          "checkpoint": "second_entry",
+          "cash": "400",
+          "quantity": "1",
+          "mark": "500",
+          "equity": "900",
+          "realized_pnl": "0"
+        }
+      ],
+      "first_rejection": "INSUFFICIENT_SPENDABLE_CASH",
+      "expected_final_unsettled_cash": "0",
+      "note": "Release is a fixture event, not an assertion about real settlement schedules."
+    },
+    {
+      "id": "F16",
+      "name": "Removed candidate remains protected",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": "104"
+      },
+      "events": [
+        {
+          "type": "scanner_snapshot",
+          "time_local": "09:31:00",
+          "candidates": []
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:31:00",
+          "symbol": "AAA",
+          "open": "97"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "gap_exit",
+          "cash": "985",
+          "quantity": "0",
+          "mark": "97",
+          "equity": "985",
+          "realized_pnl": "-15"
+        }
+      ],
+      "exit_price": "97"
+    },
+    {
+      "id": "F17",
+      "name": "Split preserves equity and feature units",
+      "initial_cash": "500",
+      "initial_position": {
+        "symbol": "AAA",
+        "quantity": "5",
+        "entry": "100",
+        "stop": "98",
+        "target": "104"
+      },
+      "historical_reference": {
+        "previous_raw_close": "100",
+        "prior_raw_volume": "1000"
+      },
+      "events": [
+        {
+          "type": "split_effective",
+          "time_local": "09:30:00",
+          "symbol": "AAA",
+          "ratio_new_to_old": "2",
+          "known_at": "09:00:00"
+        },
+        {
+          "type": "bar_open",
+          "time_local": "09:30:00",
+          "symbol": "AAA",
+          "open": "50"
+        }
+      ],
+      "expected": [
+        {
+          "checkpoint": "post_split_open",
+          "cash": "500",
+          "quantity": "10",
+          "mark": "50",
+          "equity": "1000",
+          "realized_pnl": "0"
+        }
+      ],
+      "expected_position": {
+        "quantity": "10",
+        "entry": "50",
+        "stop": "49",
+        "target": "52"
+      },
+      "expected_features": {
+        "previous_close_current_units": "50",
+        "prior_volume_current_units": "2000",
+        "session_gap_fraction": "0"
+      },
+      "note": "Seeded position exercises the ledger; overnight holding is not enabled for the proposed trading baseline."
+    }
+  ]
+}
