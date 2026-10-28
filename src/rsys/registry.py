@@ -7,6 +7,7 @@ with those two files if they change.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -41,10 +42,38 @@ def _positive_int(v: Any) -> bool:
 
 
 def _nonnegative(v: Any) -> bool:
+    if isinstance(v, bool):
+        return False
     try:
-        return float(v) >= 0
+        return math.isfinite(float(v)) and float(v) >= 0
     except (TypeError, ValueError):
         return False
+
+
+def _positive_number(v: Any) -> bool:
+    """Shared with config.py: finite, strictly positive Decimal/int/float, excluding bool."""
+    if isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(float(v)) and float(v) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _fraction_0_1(v: Any) -> bool:
+    """Shared with config.py: finite value in (0, 1], e.g. a fraction of equity."""
+    if isinstance(v, bool):
+        return False
+    try:
+        f = float(v)
+        return math.isfinite(f) and 0 < f <= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _non_empty_str(v: Any) -> bool:
+    """Shared with config.py: a required identifier is present and not blank."""
+    return isinstance(v, str) and v.strip() != ""
 
 
 # Field paths use dotted notation relative to the research config root.
@@ -68,7 +97,7 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "scanner.min_prior_dollar_volume": ParameterSpec(
         "scanner.min_prior_dollar_volume", "USD", "open", "D12",
-        "Positive USD threshold; requires data audit",
+        "Positive USD threshold; requires data audit", _positive_number,
     ),
     "reporting.ranking_storage": ParameterSpec(
         "reporting.ranking_storage", "enum", "proposed", "D21",
@@ -105,45 +134,59 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "feed": ParameterSpec(
         "feed", "provider feed id", "open", "D12", "Feed entitlement and coverage must be audited first",
+        _non_empty_str,
     ),
     "data_manifest": ParameterSpec(
         "data_manifest", "manifest ref", "open", "D12", "Coverage manifest must be produced by the data audit",
+        _non_empty_str,
     ),
     "account.profile": ParameterSpec(
         "account.profile", "profile id", "open", "D09", "Requires verified Alpaca account profile",
+        _non_empty_str,
     ),
     "account.quantity_step": ParameterSpec(
         "account.quantity_step", "shares", "open", "D09", "Requires verified whole/fractional share rules",
+        _positive_number,
     ),
     "account.minimum_quantity": ParameterSpec(
         "account.minimum_quantity", "shares", "open", "D09", "Requires verified minimum order size",
+        _nonnegative,
     ),
     "account.proceeds_availability": ParameterSpec(
         "account.proceeds_availability", "policy id", "open", "D09", "Requires verified settlement/proceeds policy",
+        _non_empty_str,
     ),
     "risk.fraction_per_trade": ParameterSpec(
         "risk.fraction_per_trade", "fraction of equity", "open", "D10", "Requires confirmed per-trade risk limit",
+        _fraction_0_1,
     ),
     "risk.daily_loss_limit_usd": ParameterSpec(
         "risk.daily_loss_limit_usd", "USD", "open", "D10", "Requires confirmed daily loss stop",
+        _positive_number,
     ),
     "risk.drawdown_limit_fraction": ParameterSpec(
         "risk.drawdown_limit_fraction", "fraction of equity", "open", "D10", "Requires confirmed drawdown ceiling",
+        _fraction_0_1,
     ),
     "risk.max_positions": ParameterSpec(
         "risk.max_positions", "count", "open", "D10", "Requires confirmed simultaneous-position limit",
+        _positive_int,
     ),
     "risk.max_position_notional_usd": ParameterSpec(
         "risk.max_position_notional_usd", "USD", "open", "D10", "Requires confirmed exposure cap",
+        _positive_number,
     ),
     "execution.spread_bps": ParameterSpec(
         "execution.spread_bps", "basis points", "open", "D11", "Requires confirmed cost/latency assumptions",
+        _nonnegative,
     ),
     "execution.slippage_bps": ParameterSpec(
         "execution.slippage_bps", "basis points", "open", "D11", "Requires confirmed cost/latency assumptions",
+        _nonnegative,
     ),
     "execution.fee_profile": ParameterSpec(
         "execution.fee_profile", "profile id", "open", "D11", "Requires confirmed fee schedule",
+        _non_empty_str,
     ),
     "execution.feed_delay_ms": ParameterSpec(
         "execution.feed_delay_ms", "milliseconds", "open", "D11", "Requires confirmed feed delay",
@@ -173,15 +216,90 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "experiment.trial_budget": ParameterSpec(
         "experiment.trial_budget", "count", "open", "D16", "Requires a bounded, registered trial budget",
+        _positive_int,
     ),
     "experiment.seed": ParameterSpec(
         "experiment.seed", "seed value", "open", "D16", "Requires a declared seed for reproducibility",
     ),
-    "promotion_gates": ParameterSpec(
-        "promotion_gates", "gate spec", "open", "D17", "Requires frozen promotion thresholds and uncertainty method",
+    # D17 promotion gates: one leaf per required field in the experiments.md "Promotion contract"
+    # table, grouped to mirror that table's rows. `promotion_gates: {}` leaves every leaf at None,
+    # so it is exactly as unresolved as `promotion_gates: null` -- no longer silently satisfied.
+    "promotion_gates.minimum_observations.minimum_evaluation_days": ParameterSpec(
+        "promotion_gates.minimum_observations.minimum_evaluation_days", "days", "open", "D17",
+        "Requires frozen minimum evaluation-day count", _positive_int,
+    ),
+    "promotion_gates.minimum_observations.minimum_evaluation_trades": ParameterSpec(
+        "promotion_gates.minimum_observations.minimum_evaluation_trades", "count", "open", "D17",
+        "Requires frozen minimum evaluation-trade count", _positive_int,
+    ),
+    "promotion_gates.minimum_observations.dependent_observation_treatment": ParameterSpec(
+        "promotion_gates.minimum_observations.dependent_observation_treatment", "method ref", "open", "D17",
+        "Requires a declared treatment for dependent observations", _non_empty_str,
+    ),
+    "promotion_gates.net_return.net_return_requirement": ParameterSpec(
+        "promotion_gates.net_return.net_return_requirement", "fraction or USD", "open", "D17",
+        "Requires frozen positive net-return target (deposits excluded)", _positive_number,
+    ),
+    "promotion_gates.net_return.metric_definition": ParameterSpec(
+        "promotion_gates.net_return.metric_definition", "method ref", "open", "D17",
+        "Requires a declared net-return metric definition", _non_empty_str,
+    ),
+    "promotion_gates.control_improvement.control_id": ParameterSpec(
+        "promotion_gates.control_improvement.control_id", "control id", "open", "D17",
+        "Requires a declared control to compare against", _non_empty_str,
+    ),
+    "promotion_gates.control_improvement.improvement_measure": ParameterSpec(
+        "promotion_gates.control_improvement.improvement_measure", "method ref", "open", "D17",
+        "Requires a declared paired-improvement measure", _non_empty_str,
+    ),
+    "promotion_gates.drawdown.drawdown_ceiling": ParameterSpec(
+        "promotion_gates.drawdown.drawdown_ceiling", "fraction of equity", "open", "D17",
+        "Requires a frozen maximum permitted drawdown", _fraction_0_1,
+    ),
+    "promotion_gates.uncertainty.confidence_level": ParameterSpec(
+        "promotion_gates.uncertainty.confidence_level", "fraction", "open", "D17",
+        "Requires a frozen confidence level", _fraction_0_1,
+    ),
+    "promotion_gates.uncertainty.resampling_design": ParameterSpec(
+        "promotion_gates.uncertainty.resampling_design", "method ref", "open", "D17",
+        "Requires a declared daily/block resampling design", _non_empty_str,
+    ),
+    "promotion_gates.uncertainty.acceptance_criterion": ParameterSpec(
+        "promotion_gates.uncertainty.acceptance_criterion", "method ref", "open", "D17",
+        "Requires a declared uncertainty acceptance criterion", _non_empty_str,
+    ),
+    "promotion_gates.cost_stress.scenarios": ParameterSpec(
+        "promotion_gates.cost_stress.scenarios", "scenario list", "open", "D17",
+        "Requires at least one declared cost/delay stress scenario",
+        lambda v: isinstance(v, list) and len(v) > 0,
+    ),
+    "promotion_gates.cost_stress.acceptance_criteria": ParameterSpec(
+        "promotion_gates.cost_stress.acceptance_criteria", "method ref", "open", "D17",
+        "Requires declared cost-stress acceptance criteria", _non_empty_str,
+    ),
+    "promotion_gates.concentration.limits": ParameterSpec(
+        "promotion_gates.concentration.limits", "method ref", "open", "D17",
+        "Requires declared symbol/period/winner concentration limits", _non_empty_str,
+    ),
+    "promotion_gates.concentration.diagnostics": ParameterSpec(
+        "promotion_gates.concentration.diagnostics", "method ref", "open", "D17",
+        "Requires declared concentration diagnostics", _non_empty_str,
+    ),
+    "promotion_gates.paper_observation.forward_duration_days": ParameterSpec(
+        "promotion_gates.paper_observation.forward_duration_days", "days", "open", "D17",
+        "Requires a frozen forward paper-observation duration", _positive_int,
+    ),
+    "promotion_gates.paper_observation.sample_requirement": ParameterSpec(
+        "promotion_gates.paper_observation.sample_requirement", "method ref", "open", "D17",
+        "Requires a declared paper-observation sample requirement", _non_empty_str,
+    ),
+    "promotion_gates.paper_observation.incident_handling": ParameterSpec(
+        "promotion_gates.paper_observation.incident_handling", "method ref", "open", "D17",
+        "Requires declared paper-observation incident handling", _non_empty_str,
     ),
     "data_adjustment.symbol_mapping_asof": ParameterSpec(
         "data_adjustment.symbol_mapping_asof", "asof ref", "open", "D13", "Requires audited historical universe mapping",
+        _non_empty_str,
     ),
 }
 
