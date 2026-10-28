@@ -34,10 +34,16 @@ IDs are stable. Test paths/names are implementation targets; they have not been 
 | POS-001 | Held symbols are managed outside scanner | F16; `test_removed_candidate_position` | M2-01 |
 | STRAT-001 | ORB follows the explicit state machine | ORB-01 through ORB-07 | M2-02 |
 | STRAT-002 | VWAP follows the explicit state machine | VWAP-01 through VWAP-08 | M2-03 |
-| EXP-001 | Every attempt has immutable inputs, status and outputs | `test_run_record`; rerun equivalence | M0-02, M2-04 |
+| EXP-001 | Every attempt has immutable inputs, status and outputs | `test_resolved_config_cannot_change_after_creation`, `test_config_hash_cannot_change_after_creation`, `test_hypothesis_cannot_change_after_creation`, `test_identical_resolved_config_gets_separate_run_ids` | M0-02, M2-04 |
 | EXP-002 | Holdout access uses the frozen procedure | `test_holdout_access_blocked` | M0-01, M2-04 |
 | EXP-003 | Control comparison checks dates/costs/capital | `test_incompatible_comparison` | M2-04 |
 | EXP-004 | Full-account outcomes separate from entry/exit diagnostics | `test_metric_scope` | M2-04 |
+| EXP-005 | Status transitions follow the declared lifecycle; a finalized attempt cannot resurrect or rerun in place | `test_finalized_run_cannot_transition_back_to_running`, `test_rerun_after_success_gets_a_fresh_id` | M0-02 |
+| EXP-006 | A process that dies mid-run is recoverable as a truthful, non-success status; handled interruptions are distinct from crashes | `test_handled_interruption_preserves_truthful_status`, `test_recover_crashed_runs_marks_stuck_running_as_crashed_not_success`, `test_recover_crashed_runs_does_not_touch_finalized_runs` | M0-02 |
+| EXP-007 | A persistence failure during a write leaves the authoritative record in its last durably-committed state, never corrupted or half-written | `test_injected_persistence_failure_leaves_record_in_last_good_state`, `test_transition_log_records_every_status_change` | M0-02 |
+| EXP-008 | Secret-like fields are redacted by exact field-name matching, not substring matching; legitimate settings (e.g. `ranking_sort_key`) are preserved; saved error text is scrubbed of the original secret values | `test_redact_secrets_matches_key_patterns`, `test_redact_secrets_does_not_false_positive_on_ranking_sort_key`, `test_fake_secret_is_scrubbed_from_saved_error_text` | M0-02 |
+| EXP-009 | Every run captures code/dependency provenance; input-data identity is either concrete or an explicit not-applicable reason | `test_run_record_captures_code_and_dependency_provenance`, `test_data_not_applicable_reason_is_recorded_explicitly`, `test_data_identity_is_recorded_when_provided` | M0-02 |
+| EXP-010 | A run ID cannot traverse or escape the storage root | `test_traversal_run_ids_cannot_escape_storage_root`, `test_valid_nested_run_id_stays_inside_root` | M0-02 |
 | REPORT-001 | Report identifies synthetic/market evidence and missing metrics | `test_report_labels` | M2-04 |
 
 ## Future-perturbation harness

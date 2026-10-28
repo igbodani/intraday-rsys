@@ -6,7 +6,7 @@ Start with `docs/tickets.md` for the ticket order (M0–M2) before writing logic
 
 ## Status
 
-**M0-01 (configuration validation) is implemented.** `rsys validate --config PATH` loads a `fixture` or `research` profile, type-checks it, and reports every unresolved/invalid field by name with its decision ID (`docs/decisions.md`). `fixture`, `run`, `compare`, and `final-evaluate` remain CLI stubs (later tickets) — no replay, scanner, strategy, ledger, or trading logic exists yet, and no market data or backtest evidence is produced by this repo.
+**M0-01 (configuration validation) and M0-02 (run evidence) are implemented.** `rsys validate --config PATH` loads a `fixture` or `research` profile, type-checks it, and reports every unresolved/invalid field by name with its decision ID (`docs/decisions.md`). `rsys.experiments`/`rsys.storage` provide `start_run`/`run_context` helpers with immutable resolved inputs, a frozen status lifecycle (`pending -> running -> {success, failed, interrupted, crashed}`), crash recovery, path-safe storage, and secret-redacted records -- but `fixture`, `run`, `compare`, and `final-evaluate` remain CLI stubs (later tickets). No replay, scanner, strategy, ledger, or trading logic exists yet, and no market data or backtest evidence is produced by this repo.
 
 ```bash
 uv run rsys validate --config configs/fixture.yaml           # exits 0: synthetic fixture profile, no blockers
