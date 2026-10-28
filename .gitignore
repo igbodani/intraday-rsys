@@ -4,7 +4,7 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 dist/
-data/
-runs/
+/data/
+/runs/
 .env
 *.key

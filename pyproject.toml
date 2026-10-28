@@ -9,6 +9,7 @@ dependencies = [
     "pydantic",
     "pyyaml",
     "pyarrow",
+    "tzdata",
 ]
 
 [project.scripts]

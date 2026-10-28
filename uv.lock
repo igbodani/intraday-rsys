@@ -979,6 +979,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "tzdata" },
 ]
 
 [package.optional-dependencies]
@@ -1004,6 +1005,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "torch", marker = "extra == 'kronos'" },
+    { name = "tzdata" },
 ]
 provides-extras = ["kronos", "nautilus"]
 
