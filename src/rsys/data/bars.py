@@ -10,7 +10,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+from rsys.data.events import QualityState
 
 
 class DataQualityCode(StrEnum):
@@ -107,3 +109,65 @@ def check_adjustment_mode(execution_required_adjustment: str, input_adjustment: 
     if execution_required_adjustment != input_adjustment:
         return DataQualityCode.ADJUSTMENT_MODE_MISMATCH
     return None
+
+
+# Declared bucket durations for alignment validation; extending beyond these requires
+# its own versioned entry, not a silent assumption (D05: 1-minute baseline in v1).
+INTERVAL_DURATIONS_NS: dict[str, int] = {"1Min": 60_000_000_000}
+
+
+class NormalizedBarIdentity(NamedTuple):
+    """Canonical identity keyed on integer nanoseconds, so `...Z` and `...+00:00` bar_start
+    strings that mean the same instant always compare identical."""
+
+    instrument_id: str
+    feed: str
+    interval: str
+    bar_start_ns: int
+    adjustment_mode: str
+
+
+class NormalizedBar(BaseModel):
+    """The D1 bar contract: identity, interval bounds, availability/revision, OHLCV, the price-unit
+    (corporate-action) version it is expressed in, source, and quality metadata. A bare `RawBar`
+    (payload sanity only, no identity/availability/provenance) is not this contract.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    instrument_id: str
+    feed: str
+    interval: str
+    bar_start_ns: int
+    bar_end_ns: int
+    available_at_ns: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    adjustment_mode: str
+    price_unit_version: str  # which corporate-action conversion state the OHLCV is expressed in
+    source: str
+    revision: int = 1
+    quality_state: QualityState
+
+    @model_validator(mode="after")
+    def _check_bounds_and_alignment(self) -> NormalizedBar:
+        if self.bar_end_ns <= self.bar_start_ns:
+            raise ValueError("bar_end_ns must be after bar_start_ns")
+        expected_duration = INTERVAL_DURATIONS_NS.get(self.interval)
+        if expected_duration is not None and (self.bar_end_ns - self.bar_start_ns) != expected_duration:
+            raise ValueError(f"bar duration does not match the declared interval {self.interval!r}")
+        if self.available_at_ns < self.bar_end_ns:
+            raise ValueError("available_at_ns cannot precede bar_end_ns (no future value exposed early)")
+        return self
+
+    def identity(self) -> NormalizedBarIdentity:
+        return NormalizedBarIdentity(
+            self.instrument_id, self.feed, self.interval, self.bar_start_ns, self.adjustment_mode
+        )
+
+    def is_available_at(self, as_of_ns: int) -> bool:
+        """Public-view gate: forbid exposing a bar before its declared availability."""
+        return as_of_ns >= self.available_at_ns

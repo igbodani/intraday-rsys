@@ -8,12 +8,15 @@ import pytest
 from rsys.data.actions import (
     CorporateAction,
     apply_split_to_position,
+    bars_invalidated_by_action,
     convert_price_to_current_units,
     convert_volume_to_current_units,
     is_dispatched_by,
 )
 from rsys.data.bars import (
     DataQualityCode,
+    NormalizedBar,
+    QualityState,
     RawBar,
     SetupStatus,
     check_adjustment_mode,
@@ -22,6 +25,7 @@ from rsys.data.bars import (
     reconcile_duplicates,
     validate_ohlcv,
 )
+from rsys.data.timestamps import parse_utc_timestamp_ns
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_CASES = json.loads((REPO_ROOT / "fixtures" / "data_cases.json").read_text(encoding="utf-8"))
@@ -168,3 +172,51 @@ def test_action_rejects_nonpositive_ratio():
             known_at=datetime(2024, 6, 10, tzinfo=UTC),
             source="fixture_test",
         )
+
+
+def test_action_rejects_naive_timestamps():
+    with pytest.raises(ValueError):
+        CorporateAction(
+            instrument_id="AAA", action_type="split", ratio=Decimal(2),
+            effective_at=datetime(2024, 6, 10),  # naive, no tzinfo
+            known_at=datetime(2024, 6, 10, tzinfo=UTC),
+            source="fixture_test",
+        )
+
+
+def test_action_rejects_non_utc_offset_timestamps():
+    from datetime import timedelta, timezone
+
+    with pytest.raises(ValueError):
+        CorporateAction(
+            instrument_id="AAA", action_type="split", ratio=Decimal(2),
+            effective_at=datetime(2024, 6, 10, tzinfo=timezone(timedelta(hours=-5))),
+            known_at=datetime(2024, 6, 10, tzinfo=UTC),
+            source="fixture_test",
+        )
+
+
+def _normalized_bar(bar_start_ns: int, bar_end_ns: int) -> NormalizedBar:
+    return NormalizedBar(
+        instrument_id="AAA", feed="fixture", interval="1Min", bar_start_ns=bar_start_ns, bar_end_ns=bar_end_ns,
+        available_at_ns=bar_end_ns, open=Decimal(100), high=Decimal(101), low=Decimal(99), close=Decimal(100),
+        volume=Decimal(10), adjustment_mode="raw", price_unit_version="data_rules_v1", source="fixture",
+        quality_state=QualityState.OK,
+    )
+
+
+def test_bar_straddling_a_split_dispatch_is_invalidated():
+    bar_start = parse_utc_timestamp_ns("2024-06-10T13:30:00Z")
+    bar_end = parse_utc_timestamp_ns("2024-06-10T13:31:00Z")
+    straddling_bar = _normalized_bar(bar_start, bar_end)
+    clean_bar = _normalized_bar(bar_end, parse_utc_timestamp_ns("2024-06-10T13:32:00Z"))
+    action = CorporateAction(
+        instrument_id="AAA", action_type="split", ratio=Decimal(2),
+        effective_at=datetime(2024, 6, 10, 13, 30, 30, tzinfo=UTC),  # mid-bar
+        known_at=datetime(2024, 6, 10, 13, 30, 30, tzinfo=UTC),
+        source="fixture_test",
+    )
+
+    invalidated = bars_invalidated_by_action(action, [straddling_bar, clean_bar])
+
+    assert invalidated == [straddling_bar]

@@ -21,9 +21,12 @@ IDs are stable. Test paths/names are implementation targets; they have not been 
 | CFG-015 | A gate "method" field must cite a declared, versioned specification; a placeholder string like `defined` is insufficient | `test_placeholder_method_string_is_insufficient_for_a_gate_method_field`, `test_versioned_method_reference_is_accepted_for_a_gate_method_field` | H1 |
 | CFG-016 | Decoding failures (malformed YAML, invalid UTF-8) are controlled `ConfigError`s; custom validator and registry blocker messages never echo the submitted/resolved value | `test_invalid_utf8_file_is_a_controlled_failure`, `test_custom_validator_error_does_not_leak_the_submitted_value`, `test_registry_blocker_reason_does_not_leak_the_resolved_value` | H1 |
 | DATA-001 | Validate intervals, duplicate identity, OHLCV and source metadata | `test_data_contract` | M1-01 |
-| DATA-002 | Record historical coverage and universe exclusions | `test_universe_manifest` | D1 (was M1-01; not yet implemented) |
+| DATA-002 | Record historical coverage and universe exclusions; a verified no-trade interval is distinct from missing delivery | `test_manifest_accepts_exclusions_covering_the_gap`, `test_verified_no_trade_is_distinct_from_missing_delivery`, `test_manifest_rejects_a_requested_instrument_neither_observed_nor_excluded` | D1 |
 | DATA-003 | Raw execution and as-of split units are consistent | F17; DQ07; `test_future_split_invariance` | M1-01, M2-01 |
 | DATA-004 | RVOL respects calendar coverage and feed consistency | H01–H03, DQ08 | M2-02 |
+| DATA-006 | Every market event shares a common, frozen, nanosecond-precise envelope with availability, revision, source sequence and a recorded-vs-modeled timing label | `tests/test_market_events.py` (envelope tests) | D1 |
+| DATA-007 | A `NormalizedBar`'s identity canonicalizes equivalent UTC timestamp strings; interval length/alignment and availability-before-end are enforced | `test_normalized_bar_identity_is_canonical_across_equivalent_timestamp_strings`, `test_normalized_bar_rejects_duration_mismatching_declared_interval`, `test_normalized_bar_rejects_availability_before_bar_end` | D1 |
+| DATA-008 | Corporate-action timestamps must be explicit tz-aware UTC; a bar straddling an action's dispatch moment is invalidated, not settled against mixed units | `test_action_rejects_naive_timestamps`, `test_action_rejects_non_utc_offset_timestamps`, `test_bar_straddling_a_split_dispatch_is_invalidated` | D1 |
 | DATA-005 | Invalid, conflicting or missing bars cannot silently become signals | DQ01–DQ06 | M1-01 |
 | CAL-002 | Exchange opening time follows DST | TZ01–TZ04 | M1-01 |
 | ORDER-001 | Acceptance and fill order use declared stable keys | F05 plus reversed input; `test_acceptance_sort` | M2-01 |
