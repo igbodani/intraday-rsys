@@ -10,11 +10,14 @@ import pytest
 from rsys.data.bar_builder import (
     BarSnapshot,
     ConflictingTradeError,
+    MismatchedSeriesError,
+    RejectedQualityError,
     SnapshotStatus,
     TradeBarBuilder,
     UnresolvedCorrectionError,
 )
 from rsys.data.bar_rules import FixtureBarRuleSet
+from rsys.data.bar_version_store import BarVersionStore
 from rsys.data.events import (
     EventTimeMeaning,
     QualityState,
@@ -197,3 +200,148 @@ def test_timer_closes_a_bucket_with_no_recent_trade():
     closed = builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:31:00Z"))
     assert len(closed) == 1
     assert closed[0].status == SnapshotStatus.CLOSED_AS_OF
+
+
+# ---- C05 regression: a mismatched-series or non-OK-quality event must never mutate state ----
+
+def test_wrong_instrument_trade_cannot_alter_this_builders_state():
+    """C05: a BBB trade must never be accepted (and thus never mutate state) by an AAA builder,
+    even if the caller mistakenly routes it there."""
+    builder = _builder()  # instrument_id="AAA"
+    wrong_series_trade = TradeEvent(
+        **_COMMON, event_id="wrong", instrument_id="BBB",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        price=Decimal(100), size=Decimal(10), trade_id="wrong", venue="V",
+    )
+    with pytest.raises(MismatchedSeriesError):
+        builder.on_trade(wrong_series_trade)
+
+    snap = builder.snapshot(parse_utc_timestamp_ns("2024-06-10T09:30:00Z"), parse_utc_timestamp_ns("2024-06-10T09:30:05Z"))
+    assert snap.trade_count == 0  # rejected before any mutation
+
+
+def test_wrong_feed_trade_cannot_alter_this_builders_state():
+    builder = _builder()  # feed="fixture"
+    wrong_feed_trade = TradeEvent(
+        **{**_COMMON, "feed": "other_feed"}, event_id="wrong", instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        price=Decimal(100), size=Decimal(10), trade_id="wrong", venue="V",
+    )
+    with pytest.raises(MismatchedSeriesError):
+        builder.on_trade(wrong_feed_trade)
+
+
+def test_non_ok_quality_trade_cannot_alter_builder_state():
+    builder = _builder()
+    suspect_trade = TradeEvent(
+        **{**_COMMON, "quality_state": QualityState.SUSPECT}, event_id="s1", instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:05Z"),
+        price=Decimal(100), size=Decimal(10), trade_id="s1", venue="V",
+    )
+    with pytest.raises(RejectedQualityError):
+        builder.on_trade(suspect_trade)
+
+
+def test_trade_event_rejects_negative_or_zero_size():
+    with pytest.raises(ValueError, match="size"):
+        _trade("bad", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, -10)
+    with pytest.raises(ValueError, match="size"):
+        _trade("bad", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 0)
+
+
+def test_trade_event_rejects_negative_or_zero_price():
+    with pytest.raises(ValueError, match="price"):
+        _trade("bad", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", -1, 10)
+
+
+# ---- C06 regression: an as-of query must reflect only what was published by the cutoff ----
+
+def test_version_store_as_of_does_not_leak_a_later_trades_price_into_an_earlier_query():
+    """The original C06 defect: after T1 at second 5 and T2 at second 20, querying a builder
+    snapshot as-of second 5 incorrectly returned T2's price (merely re-stamped with the earlier
+    time) because `snapshot()` always recomputes from the CURRENT contributor set. The version
+    store must instead answer only from what had actually been published by the cutoff."""
+    store = BarVersionStore()
+    builder = TradeBarBuilder("AAA", "fixture", "1Min", FixtureBarRuleSet(), version_store=store)
+    identity = ("AAA", "fixture", "1Min", parse_utc_timestamp_ns("2024-06-10T09:30:00Z"))
+
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    builder.on_trade(_trade("T2", "2024-06-10T09:30:20Z", "2024-06-10T09:30:20Z", 150, 5))
+
+    as_of_5 = store.as_of(identity, parse_utc_timestamp_ns("2024-06-10T09:30:05Z"))
+    assert as_of_5 is not None
+    assert as_of_5.close == Decimal(100)  # only T1 had been published by second 5
+    assert as_of_5.source_event_ids == ("T1",)
+
+    as_of_20 = store.as_of(identity, parse_utc_timestamp_ns("2024-06-10T09:30:20Z"))
+    assert as_of_20 is not None
+    assert as_of_20.close == Decimal(150)
+
+    # Meanwhile the builder's own live query always reflects everything accepted so far --
+    # it is documented as current-only, never a historical substitute.
+    live = builder.snapshot(identity[3], parse_utc_timestamp_ns("2024-06-10T09:30:05Z"))
+    assert live.close == Decimal(150)
+
+
+def test_version_store_as_of_before_any_publication_is_a_typed_unavailable_result():
+    store = BarVersionStore()
+    identity = ("AAA", "fixture", "1Min", parse_utc_timestamp_ns("2024-06-10T09:30:00Z"))
+    assert store.as_of(identity, parse_utc_timestamp_ns("2024-06-10T09:30:00Z")) is None
+
+
+def test_version_store_records_a_separate_version_for_a_correction():
+    store = BarVersionStore()
+    builder = TradeBarBuilder("AAA", "fixture", "1Min", FixtureBarRuleSet(), version_store=store)
+    identity = ("AAA", "fixture", "1Min", parse_utc_timestamp_ns("2024-06-10T09:30:00Z"))
+
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    builder.on_correction(TradeCorrectionEvent(
+        **_COMMON, event_id="C1", instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        original_trade_id="T1", action="correct", corrected_price=Decimal(200), corrected_size=Decimal(10),
+    ))
+
+    history = store.history(identity)
+    assert len(history) == 2
+    assert history[0].close == Decimal(100)
+    assert history[1].close == Decimal(200)
+    before_correction = store.as_of(identity, parse_utc_timestamp_ns("2024-06-10T09:30:05Z"))
+    assert before_correction is not None
+    assert before_correction.close == Decimal(100)
+
+
+# ---- C09/C10 regression: a correction's changed conditions reclassify eligibility ----
+
+def test_correction_with_changed_conditions_reclassifies_eligibility():
+    """C09 item 2 + C10: a correction that changes a trade's conditions must recompute field
+    eligibility, not silently keep the original trade's stale classification."""
+    builder = _builder()
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10, conditions=("ALL",)))
+    snap = builder.on_correction(TradeCorrectionEvent(
+        **_COMMON, event_id="C1", instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        original_trade_id="T1", action="correct", corrected_price=Decimal(150), corrected_size=Decimal(10),
+        conditions=("VOLUME_ONLY",),
+    ))
+    # VOLUME_ONLY excludes every price field, so the bucket now has no eligible open/close/high/low.
+    assert snap.open is None
+    assert snap.close is None
+    assert snap.volume == Decimal(10)
+
+
+def test_correction_without_new_conditions_keeps_the_original_eligibility():
+    builder = _builder()
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10, conditions=("ALL",)))
+    snap = builder.on_correction(TradeCorrectionEvent(
+        **_COMMON, event_id="C1", instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+        original_trade_id="T1", action="correct", corrected_price=Decimal(150), corrected_size=Decimal(10),
+    ))
+    assert snap.close == Decimal(150)  # price updated; eligibility (ALL) unchanged since untouched
+

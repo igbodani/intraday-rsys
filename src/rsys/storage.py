@@ -59,6 +59,15 @@ _IMMUTABLE_FIELDS = (
     "seed", "account_cost_profile", "started_at",
 )
 
+# No outgoing transitions declared for these: once reached, a run is sealed (see
+# `_check_terminal_sealed` -- an identical repeat write is an idempotent no-op; a
+# write that changes any result field is rejected, not silently accepted, C02/C03).
+_TERMINAL_STATUSES = frozenset({"success", "failed", "interrupted", "crashed"})
+
+# Result/output fields a terminal run may still legitimately have had set by the same
+# write that finalized it; compared verbatim to detect a conflicting second finalizer.
+_RESULT_FIELDS = ("ended_at", "error", "artifacts", "exclusions", "metrics", "decision_gate_status")
+
 _JSON_COLUMNS = ("resolved_config", "code_manifest", "artifacts", "exclusions", "metrics", "decision_gate_status")
 
 
@@ -92,6 +101,10 @@ class RunRecord(BaseModel):
     # In-memory only (never serialized): raw secret-field values found in the
     # original resolved_config, used to scrub them out of later error text.
     _secret_values: list[str] = PrivateAttr(default_factory=list)
+    # Whether `_secret_values` was actually populated from a resolved_config in this process
+    # (True, even if that config happened to contain zero secrets) vs. simply defaulted to
+    # empty because the record was reloaded from disk (False, genuinely unknown) -- C04.
+    _secret_values_known: bool = PrivateAttr(default=False)
 
 
 class RunAlreadyExistsError(Exception):
@@ -108,6 +121,12 @@ class InvalidRunIdError(ValueError):
 
 class IllegalTransitionError(Exception):
     """A status change outside the declared lifecycle (e.g. resurrecting a finalized attempt)."""
+
+
+class TerminalOutcomeConflictError(IllegalTransitionError):
+    """A second finalizer tried to record a different terminal outcome for an already-sealed run.
+    Distinct from a generic IllegalTransitionError so callers can tell "someone else finished
+    this run first" apart from an actually-illegal lifecycle request."""
 
 
 class FrozenFieldError(Exception):
@@ -261,16 +280,31 @@ class RunStorage:
             self._insert_transition(record.run_id, record.status, payload_hash)
 
     def write_record(self, record: RunRecord) -> None:
+        """C02 fix: the read-current/validate/write sequence all happens *inside* one
+        `BEGIN IMMEDIATE` transaction. Previously the read and validation ran before the
+        transaction started, so two concurrent writers could both validate against the same
+        stale "running" state and both commit -- e.g. `running -> success` then, moments
+        later, `running -> failed` from a writer that never saw the first commit. Validating
+        after acquiring the write lock means the second writer re-reads the *already-committed*
+        first outcome and is correctly rejected.
+        """
         _validate_run_id(record.run_id)
-        current = self.load_record(record.run_id)
-        self._check_immutable_fields(current, record)
-        self._check_owner_not_reassigned(current, record)
-        self._check_legal_transition(current.status, record.status)
-        values = self._row_values(record)
-        payload_hash = canonical_hash(dict(zip(_RUN_COLUMNS, values, strict=True)))
-        assignments = ", ".join(f"{col} = ?" for col in _RUN_COLUMNS if col != "run_id")
-        update_values = tuple(v for col, v in zip(_RUN_COLUMNS, values, strict=True) if col != "run_id")
         with self._transaction():
+            current = self._load_record_for_update(record.run_id)
+            self._check_immutable_fields(current, record)
+            self._check_owner_not_reassigned(current, record)
+            if current.status in _TERMINAL_STATUSES and record.status == current.status:
+                if any(getattr(current, f) != getattr(record, f) for f in _RESULT_FIELDS):
+                    raise TerminalOutcomeConflictError(
+                        f"run {record.run_id!r} is already sealed as {current.status!r}; "
+                        "a different result cannot overwrite it"
+                    )
+                return  # identical repeat of an already-sealed terminal outcome: idempotent no-op
+            self._check_legal_transition(current.status, record.status)
+            values = self._row_values(record)
+            payload_hash = canonical_hash(dict(zip(_RUN_COLUMNS, values, strict=True)))
+            assignments = ", ".join(f"{col} = ?" for col in _RUN_COLUMNS if col != "run_id")
+            update_values = tuple(v for col, v in zip(_RUN_COLUMNS, values, strict=True) if col != "run_id")
             self._conn.execute(f"UPDATE runs SET {assignments} WHERE run_id = ?", (*update_values, record.run_id))
             if record.status != current.status:
                 self._insert_transition(record.run_id, record.status, payload_hash)
@@ -299,6 +333,11 @@ class RunStorage:
 
     def load_record(self, run_id: str) -> RunRecord:
         _validate_run_id(run_id)
+        return self._load_record_for_update(run_id)
+
+    def _load_record_for_update(self, run_id: str) -> RunRecord:
+        """Caller-validated `run_id`; safe to call again inside a transaction already holding
+        the write lock (see `write_record`'s C02 fix) without re-validating the identifier."""
         row = self._conn.execute(f"SELECT {', '.join(_RUN_COLUMNS)} FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         if row is None:
             raise RunNotFoundError(f"no run record for run_id: {run_id}")
@@ -318,12 +357,30 @@ class RunStorage:
     def recover_crashed_runs(self, reason: str = "process ended without a clean status transition") -> list[str]:
         """Mark every 'running' run whose owning process is actually dead as 'crashed'.
         A run with a live owner is left untouched -- recovery must never mark a live run crashed.
+
+        Ownership/liveness checks are local-host only (`os.kill`/`OpenProcess` by PID): this
+        cannot and does not infer whether a *remote* host's owning process has died. The lock
+        file below carries its holder's PID so a stale lock left by a sweep that crashed before
+        releasing it can be detected and reclaimed, rather than blocking all future recovery
+        forever -- but that staleness check is equally local-host-only.
         """
         lock_path = self.root_dir / ".recovery.lock"
+        if lock_path.exists():
+            holder_pid = None
+            try:
+                holder_pid = int(lock_path.read_text(encoding="utf-8").strip())
+            except (ValueError, OSError):
+                pass
+            if holder_pid is None or _pid_is_alive(holder_pid):
+                # Unreadable/unknown holder is treated conservatively as still held -- we have
+                # no positive evidence it is safe to reclaim.
+                raise RecoveryInProgressError(f"a recovery sweep is already in progress: {lock_path}")
+            lock_path.unlink(missing_ok=True)  # stale lock: holder PID is confirmed dead; reclaim it
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as exc:
             raise RecoveryInProgressError(f"a recovery sweep is already in progress: {lock_path}") from exc
+        os.write(fd, str(os.getpid()).encode("utf-8"))
         os.close(fd)
         try:
             recovered: list[str] = []

@@ -1,6 +1,6 @@
 # Requirement-to-test traceability
 
-IDs are stable. Test paths/names are implementation targets; they have not been run against a system.
+IDs are stable. CFG-*/DATA-*/CAUS-001/CAUS-002/BAR-*/REPLAY-*/QUOTE-*/EXP-* test paths below have been executed and pass (348 tests, `uv run pytest tests/ -q`; `uv run ruff check .` clean, as of the 2026-10-29 corrections-and-R3 pass). Remaining rows (M2-01 and later: ORDER-001, STORE-001, CAUS-003/004, EXEC-*, ACCT-*, CAL-001, POS-001, STRAT-*, REPORT-001) are still implementation targets; their test paths have not been run against a system.
 
 | ID | Requirement | Acceptance test / fixture | Ticket |
 |---|---|---|---|
@@ -60,7 +60,7 @@ IDs are stable. Test paths/names are implementation targets; they have not been 
 
 ## Replay and trade-driven bar requirements
 
-Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). `REPLAY-001`, `REPLAY-002`, `REPLAY-004` (R1) and `BAR-001`..`BAR-010`/`BAR-012` (R2) are implemented; `BAR-011`, `QUOTE-*`, `REPLAY-005`, and the forming-bar/quote half of `REPLAY-003` remain future-ticket targets (R3), not current behavior.
+Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). As of the 2026-10-29 corrections-and-R3 pass, `REPLAY-001`..`REPLAY-005`, `BAR-001`..`BAR-012` and `QUOTE-001`/`QUOTE-002` are ALL implemented and passing, including the forming-bar/quote half of `REPLAY-003` (previously the only remaining gap): `ReplayView.forming_bar` is wired to a real `SeriesRouter`/`TradeBarBuilder`, `src/rsys/data/quotes.py` implements quote state/freshness, and `src/rsys/parity.py` implements the offline provider/builder comparator behind `BAR-011`/`REPLAY-005`. None of this is verified-Alpaca behavior: `FixtureBarRuleSet` and the parity comparator's fixtures are explicitly synthetic-only, and a real `providers/alpaca_rules.py` remains blocked on D12's provider audit.
 
 | ID | Requirement | Acceptance test / fixture | Ticket |
 |---|---|---|---|
@@ -74,15 +74,35 @@ Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticke
 | BAR-008 | No-trade, missing-data, and no-eligible-price states stay distinct; no fabricated flat bars | `test_volume_only_only_bucket_has_no_eligible_price`, `test_empty_bucket_snapshot_has_no_trades_and_no_price` | R2 |
 | BAR-009 | Timer closes a quiet bucket without waiting for another trade; incomplete EOF is visible | `test_timer_closes_a_bucket_with_no_recent_trade` | R2 |
 | BAR-010 | Old snapshots cannot mutate after a new arrival, correction, or split | `test_previously_returned_snapshot_is_unaffected_by_a_later_correction`, `test_bar_snapshot_is_frozen` | R2 |
-| BAR-011 | Source and feed changes cannot double-count or mix bar histories | `test_provider_bar_parity.py` | R3 |
+| BAR-011 | Source and feed changes cannot double-count or mix bar histories | `test_provider_bar_parity.py`; `SeriesRouter`'s single-authority-per-series wiring | R3 |
 | BAR-012 | Unsupported split/unit overlap blocks the affected interval | `test_bucket_straddling_a_split_dispatch_is_blocked`, `test_bucket_not_overlapping_a_split_dispatch_is_not_blocked` | R2 |
-| REPLAY-001 | Randomly permuted files/pages yield the same output when event identities/order metadata are unchanged | `test_replay_order_is_independent_of_input_list_order` | R1 |
+| REPLAY-001 | Randomly permuted files/pages yield the same output when event identities/order metadata are unchanged | `test_replay_order_is_independent_of_input_list_order`; `test_reversed_input_order_yields_the_same_semantic_trace_hash` (CLI-level) | R1, R3 |
 | REPLAY-002 | Perturbing unavailable future trades, quotes, revisions, or actions cannot change earlier outputs | `test_future_perturbation_does_not_change_the_honest_decision_through_cutoff`, `test_future_perturbation_harness_catches_a_deliberately_leaky_double` | R1 |
-| REPLAY-003 | Close-only strategies do not receive forming values; opted-in intrabar strategies receive only current snapshots | `test_closed_only_context_has_no_forming_or_trade_access`, `test_intrabar_context_still_has_closed_bars_and_a_bounded_latest_trade`, `test_intrabar_context_forming_bar_is_explicitly_not_yet_implemented` | R1 (forming-bar population itself: R2/R3) |
-| REPLAY-004 | Equal-time batches and derived events follow the frozen phase rules, including boundary plus late trade plus action cases | `test_same_time_batch_includes_every_symbol_with_an_event_at_that_instant`, `test_insert_derived_rejects_an_already_dispatched_bucket`, `test_insert_derived_accepts_a_future_bucket_and_preserves_order` | R1 |
-| REPLAY-005 | Historical revised data without arrival history carries the approximation label | `test_replay_inputs.py` | R3 |
-| QUOTE-001 | Quote-only input never changes a stock trade bar or traded volume | `test_quote_state.py` | R3 |
-| QUOTE-002 | Invalid/stale quotes cannot silently enter quote-dependent signals or execution estimates | `test_quote_state.py` | R3 |
+| REPLAY-003 | Close-only strategies do not receive forming values; opted-in intrabar strategies receive only current snapshots at their decision key | `test_closed_only_context_has_no_forming_or_trade_access`, `test_intrabar_context_still_has_closed_bars_and_a_bounded_latest_trade`, `test_forming_bar_query_before_t2_does_not_see_t2`, `test_context_after_freezes_at_the_cutoff_and_exposes_forming_bar` | R1, R3 |
+| REPLAY-004 | Equal-time batches and derived events follow the frozen phase rules, including boundary plus late trade plus action cases | `test_same_time_batch_includes_every_symbol_with_an_event_at_that_instant`, `test_insert_derived_rejects_an_already_dispatched_bucket`, `test_insert_derived_accepts_a_future_bucket_and_preserves_order`, `test_insert_derived_rejects_same_phase_same_instant_even_with_a_larger_tiebreak`, `test_insert_derived_accepts_a_later_phase_at_the_same_instant` | R1, FIX-05 |
+| REPLAY-005 | Historical revised data without arrival history carries the approximation label | `test_provider_bar_parity.py` (`ParityResult.not_comparable_reason` for a first-publication-vs-revision mismatch) | R3 |
+| QUOTE-001 | Quote-only input never changes a stock trade bar or traded volume | `tests/test_quote_state.py`; `SeriesRouter.apply_quote` never touches `TradeBarBuilder` state | R3 |
+| QUOTE-002 | Invalid/stale quotes cannot silently enter quote-dependent signals or execution estimates | `tests/test_quote_state.py` (`QuoteFreshnessPolicy`, locked/crossed/missing-side conditions) | R3 |
+
+## Correction regressions (2026-10-29 REPLAY_CORRECTIONS_AND_R3_HANDOFF pass)
+
+New stable IDs for the C01-C10 findings; C01-C10 themselves are handoff references, not requirement IDs.
+
+| ID | Requirement | Acceptance test / fixture | Ticket |
+|---|---|---|---|
+| CORR-001 | Source fingerprinting hashes every implementation file under `src/rsys/data/`; only root-level `data/`/`runs/` output dirs are excluded | `test_compute_source_fingerprint_includes_a_nested_data_package`, `test_compute_source_fingerprint_still_excludes_root_level_data_and_runs` | FIX-01 |
+| CORR-002 | A method-reference field resolves against a registered, versioned method, not merely a `name:vN` naming pattern | `test_syntactically_valid_but_unregistered_method_reference_is_rejected` | FIX-01 |
+| CORR-003 | Two concurrent writers cannot both commit a different terminal outcome for the same run | `test_concurrent_finalizers_cannot_both_commit_a_different_terminal_outcome`, `test_different_result_cannot_overwrite_a_sealed_terminal_outcome` | FIX-02 |
+| CORR-004 | A genuine finalization conflict/corruption raises `FinalizationError`, never silently leaves a run `running` | existing `_finalize` regression coverage in `tests/test_run_record.py` | FIX-02 |
+| CORR-005 | A reloaded record without in-memory secrets withholds (never leaks) error text when a redactor is genuinely unknown; an explicit redactor still scrubs | `test_reloaded_pending_record_without_explicit_redactor_withholds_error_text_safely`, `test_reloaded_record_with_explicit_redactor_still_scrubs_the_canary` | FIX-02 |
+| CORR-006 | A completed provider bar cannot claim availability at or before its own bar-end; OHLC/price/volume positivity is enforced at the event-envelope layer | `test_completed_bar_available_at_its_own_start_is_rejected`, `test_provider_bar_event_rejects_inconsistent_ohlc` | FIX-03 |
+| CORR-007 | The builder independently rejects a mismatched-instrument/feed or non-OK-quality event before any mutation | `test_wrong_instrument_trade_cannot_alter_this_builders_state`, `test_non_ok_quality_trade_cannot_alter_builder_state` | FIX-03 |
+| CORR-008 | A historical as-of query selects the last version actually published by the cutoff; it never recomputes current contributors and backdates the label | `test_version_store_as_of_does_not_leak_a_later_trades_price_into_an_earlier_query` | FIX-04 |
+| CORR-009 | A correction with changed conditions recomputes field eligibility; an unchanged correction keeps the original classification | `test_correction_with_changed_conditions_reclassifies_eligibility`, `test_correction_without_new_conditions_keeps_the_original_eligibility` | FIX-04 |
+| CORR-010 | Derived insertion accepts only a strictly later `(availability, phase)` pair; a same-phase/same-instant insertion is rejected regardless of tiebreak ordering | `test_insert_derived_rejects_same_phase_same_instant_even_with_a_larger_tiebreak` | FIX-05 |
+| CORR-011 | `latest_trade`/`latest_quote` resolve an availability tie to the actually-last-dispatched event, not the first tie `max()` encounters | `test_latest_trade_at_a_tied_availability_returns_the_last_dispatched_not_the_first`, `test_latest_quote_at_a_tied_availability_returns_the_last_dispatched` | FIX-05 |
+| CORR-012 | A `replay`-mode config validates its own required settings; a legacy `fixture`-mode config cannot satisfy them by switching `mode` alone | `test_a_legacy_fixture_config_is_not_accepted_as_a_replay_config`, `test_replay_unsupported_setting_value_rejected` | R3-A |
+| CORR-013 | Field eligibility separates open/high/low/close/volume/count/vwap; a late-report condition can be close-eligible without being high/low/vwap-eligible | `test_late_report_condition_allows_close_but_not_high_low_or_vwap` | R3-A |
 
 ## Future-perturbation harness
 

@@ -132,6 +132,95 @@ def test_provider_bar_event_rejects_nonpositive_duration():
         )
 
 
+# ---- C05 regression: validate the objects replay/builder actually consume ---
+
+def test_completed_bar_available_at_its_own_start_is_rejected():
+    """The original C05 defect: `available_at_ns` was only checked against `event_time_ns`
+    (which a provider could set to bar_start), so a completed bar could claim to be visible
+    before its own interval ended."""
+    start = parse_utc_timestamp_ns("2024-06-10T13:30:00Z")
+    end = parse_utc_timestamp_ns("2024-06-10T13:31:00Z")
+    with pytest.raises(ValueError, match="available"):
+        ProviderBarEvent(
+            **COMMON, event_time_ns=start, available_at_ns=start, bar_start_ns=start, bar_end_ns=end,
+            interval="1Min", open=Decimal(100), high=Decimal(101), low=Decimal(99), close=Decimal(100),
+            volume=Decimal(10), adjustment_mode="raw",
+        )
+
+
+def test_provider_bar_event_rejects_inconsistent_ohlc():
+    start = parse_utc_timestamp_ns("2024-06-10T13:30:00Z")
+    end = parse_utc_timestamp_ns("2024-06-10T13:31:00Z")
+    with pytest.raises(ValueError, match="OHLC"):
+        ProviderBarEvent(
+            **COMMON, event_time_ns=start, available_at_ns=end, bar_start_ns=start, bar_end_ns=end,
+            interval="1Min", open=Decimal(100), high=Decimal(101), low=Decimal(99), close=Decimal(999),
+            volume=Decimal(10), adjustment_mode="raw",
+        )
+
+
+def test_provider_bar_event_rejects_negative_volume():
+    start = parse_utc_timestamp_ns("2024-06-10T13:30:00Z")
+    end = parse_utc_timestamp_ns("2024-06-10T13:31:00Z")
+    with pytest.raises(ValueError, match="volume"):
+        ProviderBarEvent(
+            **COMMON, event_time_ns=start, available_at_ns=end, bar_start_ns=start, bar_end_ns=end,
+            interval="1Min", open=Decimal(100), high=Decimal(101), low=Decimal(99), close=Decimal(100),
+            volume=Decimal(-1), adjustment_mode="raw",
+        )
+
+
+@pytest.mark.parametrize(("price", "size"), [(Decimal(-1), Decimal(10)), (Decimal(0), Decimal(10)),
+                                              (Decimal(100), Decimal(-1)), (Decimal(100), Decimal(0))])
+def test_trade_event_rejects_nonpositive_price_or_size(price, size):
+    t = parse_utc_timestamp_ns("2024-06-10T13:30:05Z")
+    with pytest.raises(ValueError):
+        TradeEvent(**COMMON, event_time_ns=t, available_at_ns=t, price=price, size=size, trade_id="t1", venue="V")
+
+
+def test_trade_correction_rejects_nonpositive_replacement_values():
+    t = parse_utc_timestamp_ns("2024-06-10T13:30:05Z")
+    with pytest.raises(ValueError):
+        TradeCorrectionEvent(
+            **COMMON, event_time_ns=t, available_at_ns=t, original_trade_id="t1", action="correct",
+            corrected_price=Decimal(-1), corrected_size=Decimal(10),
+        )
+
+
+def test_received_at_requires_recorded_timing_label():
+    t = parse_utc_timestamp_ns("2024-06-10T13:30:05Z")
+    with pytest.raises(ValueError, match="received_at_ns"):
+        TradeEvent(
+            **{**COMMON, "timing_label": TimingLabel.MODELED}, event_time_ns=t, available_at_ns=t,
+            received_at_ns=t, price=Decimal(100), size=Decimal(10), trade_id="t1", venue="V",
+        )
+
+
+def test_event_cannot_be_available_before_its_own_recorded_receipt():
+    t = parse_utc_timestamp_ns("2024-06-10T13:30:05Z")
+    with pytest.raises(ValueError, match="received_at_ns"):
+        TradeEvent(
+            **COMMON, event_time_ns=t, available_at_ns=t, received_at_ns=t + 1,
+            price=Decimal(100), size=Decimal(10), trade_id="t1", venue="V",
+        )
+
+
+def test_corporate_action_cannot_be_available_before_its_dispatch_bound():
+    with pytest.raises(ValueError, match="action"):
+        CorporateActionEvent(
+            **COMMON, event_time_ns=1, available_at_ns=1, action_type="split", ratio=Decimal(2),
+            effective_at_ns=1, known_at_ns=5,
+        )
+
+
+@pytest.mark.parametrize("field", ["event_time_ns", "available_at_ns", "source_sequence", "revision"])
+def test_market_event_rejects_boolean_for_numeric_timing_fields(field):
+    t = parse_utc_timestamp_ns("2024-06-10T13:30:05Z")
+    kwargs = {"event_time_ns": t, "available_at_ns": t, field: True}
+    with pytest.raises(ValueError):
+        TradeEvent(**COMMON, price=Decimal(100), size=Decimal(10), trade_id="t1", venue="V", **kwargs)
+
+
 def test_corporate_action_event_and_timer_event_construct():
     CorporateActionEvent(
         **COMMON, event_time_ns=1, available_at_ns=1, action_type="split", ratio=Decimal(2),

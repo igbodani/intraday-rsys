@@ -1,0 +1,27 @@
+schema_version: 1
+mode: replay
+evidence_type: synthetic_only
+network_allowed: false
+input: fixtures/replay_bar_fixture_events.json
+replay:
+  input_mode: completed_bar
+  ordering_profile: bar_v1
+  availability_model: recorded_receipt
+bars:
+  authority: provider_publication
+  rule_set_id: synthetic_test_fixture_rules:v1
+interval_policy:
+  interval: 1Min
+  session: regular
+  unit_policy: raw
+revision:
+  revision_policy: latest_version_asof
+  retention_limit: 500
+  unavailable_history_policy: typed_unavailable
+observation:
+  mode: closed_only
+  cadence: completed_bar_boundary
+quotes:
+  enabled: false
+execution:
+  data_basis: inactive

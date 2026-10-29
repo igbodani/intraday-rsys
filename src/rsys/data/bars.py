@@ -13,6 +13,11 @@ from typing import NamedTuple
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from rsys.data.events import QualityState
+from rsys.data.timestamps import INTERVAL_DURATIONS_NS
+
+__all__ = [
+    "INTERVAL_DURATIONS_NS",  # re-exported from timestamps.py; kept here for existing callers
+]
 
 
 class DataQualityCode(StrEnum):
@@ -109,11 +114,6 @@ def check_adjustment_mode(execution_required_adjustment: str, input_adjustment: 
     if execution_required_adjustment != input_adjustment:
         return DataQualityCode.ADJUSTMENT_MODE_MISMATCH
     return None
-
-
-# Declared bucket durations for alignment validation; extending beyond these requires
-# its own versioned entry, not a silent assumption (D05: 1-minute baseline in v1).
-INTERVAL_DURATIONS_NS: dict[str, int] = {"1Min": 60_000_000_000}
 
 
 class NormalizedBarIdentity(NamedTuple):

@@ -177,6 +177,32 @@ def test_insert_derived_accepts_a_future_bucket_and_preserves_order():
     assert [e.event_id for e in stream] == ["revision"]
 
 
+def test_insert_derived_rejects_same_phase_same_instant_even_with_a_larger_tiebreak():
+    """C07 regression: the old rule compared the FULL sort key (including source_sequence and
+    the stable tiebreak), so a same-phase/same-instant derived event could slip in whenever its
+    tiebreak happened to sort after what was already dispatched. Same `(availability, phase)` as
+    an already-dispatched bucket must always be rejected, regardless of tiebreak ordering."""
+    stream = ReplayStream([_trade("t1", "AAA", T0, source_sequence=1)], ReplayProfile.TRADE_REPLAY_V1)
+    next(stream)  # dispatch t1 (available_at_ns=T0, phase MARKET_DATA_APPLY, source_sequence=1)
+
+    # Same instant, same phase, but a strictly larger source_sequence -- under the old
+    # full-tuple comparison this would have sorted AFTER t1's key and been wrongly accepted.
+    with pytest.raises(LateInsertionError):
+        stream.insert_derived(_trade("zzz-late", "AAA", T0, source_sequence=99))
+
+
+def test_insert_derived_accepts_a_later_phase_at_the_same_instant():
+    """The explicit exception the rule allows: a derived phase-37 publication produced while
+    dispatching phase-35 market data at the SAME availability instant is strictly later by phase
+    even though availability is unchanged."""
+    stream = ReplayStream([_trade("t1", "AAA", T0)], ReplayProfile.TRADE_REPLAY_V1)
+    next(stream)  # dispatch t1 at phase MARKET_DATA_APPLY (35)
+
+    stream.insert_derived(_bar("same-instant-revision", "AAA", T0, bar_revision=2))  # phase 37, same T0
+
+    assert [e.event_id for e in stream] == ["same-instant-revision"]
+
+
 def test_corporate_action_phase_is_shared_by_both_profiles():
     action = _action("a1", "AAA", T0)
     assert event_phase(action, ReplayProfile.BAR_V1) == Phase.CORPORATE_ACTION

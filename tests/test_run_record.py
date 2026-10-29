@@ -1,5 +1,6 @@
 import multiprocessing
 import time
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,7 @@ from rsys.storage import (
     RecoveryInProgressError,
     RunAlreadyExistsError,
     RunStorage,
+    TerminalOutcomeConflictError,
 )
 
 NO_DATA = {"data_not_applicable_reason": "fixture-only synthetic test run, no external input data"}
@@ -202,6 +204,84 @@ def test_rerun_after_success_gets_a_fresh_id(tmp_path):
     assert rerun.run_id != record.run_id
 
 
+# ---- C02 regression: transition validation must happen inside the write lock -----------
+
+def test_concurrent_finalizers_cannot_both_commit_a_different_terminal_outcome(tmp_path):
+    """Two independent connections (modeling two processes) both read 'running', then both
+    try to finalize with a *different* terminal status. Before the C02 fix, validation ran
+    outside the write transaction, so both writers could commit -- producing an impossible
+    success -> failed (or failed -> success) transition in the stored history. A
+    `threading.Barrier` forces truly concurrent commit attempts without relying on sleeps.
+    Each thread opens its own `RunStorage`/SQLite connection: sqlite3 connections are not
+    shareable across threads, so the connection must be created inside the thread that uses it.
+    """
+    import threading
+
+    storage_main = _storage(tmp_path)
+    record = start_run(storage_main, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    record.status = "running"
+    storage_main.write_record(record)
+    root_dir = storage_main.root_dir
+
+    barrier = threading.Barrier(2)
+    results: dict[str, object] = {}
+
+    def _attempt(status: str, key: str) -> None:
+        storage = RunStorage(root_dir)
+        candidate = storage.load_record(record.run_id)
+        candidate.status = status
+        barrier.wait(timeout=5)
+        try:
+            storage.write_record(candidate)
+            results[key] = "committed"
+        except IllegalTransitionError as exc:
+            results[key] = exc
+
+    thread_a = threading.Thread(target=_attempt, args=("success", "a"))
+    thread_b = threading.Thread(target=_attempt, args=("failed", "b"))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=10)
+    thread_b.join(timeout=10)
+
+    outcomes = [results["a"], results["b"]]
+    committed = [o for o in outcomes if o == "committed"]
+    rejected = [o for o in outcomes if isinstance(o, IllegalTransitionError)]
+    assert len(committed) == 1
+    assert len(rejected) == 1
+
+    final_status = storage_main.load_record(record.run_id).status
+    assert final_status in ("success", "failed")  # exactly one outcome won, never a mix
+    transitions = [t["status"] for t in storage_main.read_transitions(record.run_id)]
+    assert transitions == ["pending", "running", final_status]  # no illegal terminal->terminal entry
+
+
+def test_repeated_identical_terminal_write_is_an_idempotent_no_op(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    with run_context(storage, record):
+        pass
+
+    duplicate = record.model_copy(deep=True)
+    storage.write_record(duplicate)  # must not raise: identical content repeat
+
+    transitions = [t["status"] for t in storage.read_transitions(record.run_id)]
+    assert transitions == ["pending", "running", "success"]  # no extra transition recorded
+
+
+def test_different_result_cannot_overwrite_a_sealed_terminal_outcome(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    with run_context(storage, record):
+        pass
+
+    tampered = record.model_copy(deep=True)
+    tampered.status = "success"
+    tampered.metrics = {"fabricated": True}
+    with pytest.raises(TerminalOutcomeConflictError):
+        storage.write_record(tampered)
+
+
 def test_handled_interruption_preserves_truthful_status(tmp_path):
     storage = _storage(tmp_path)
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
@@ -284,6 +364,18 @@ def test_recovery_lock_rejects_a_concurrent_sweep(tmp_path):
     try:
         with pytest.raises(RecoveryInProgressError):
             storage.recover_crashed_runs()
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def test_stale_recovery_lock_is_reclaimed_not_permanently_blocking(tmp_path):
+    """C03: a recovery sweep that itself crashed before releasing its lock must not block
+    every future recovery attempt forever. A lock naming a confirmed-dead PID is stale."""
+    storage = _storage(tmp_path)
+    lock_path = storage.root_dir / ".recovery.lock"
+    lock_path.write_text("999999999", encoding="utf-8")  # an implausible/dead PID
+    try:
+        storage.recover_crashed_runs()  # must not raise RecoveryInProgressError
     finally:
         lock_path.unlink(missing_ok=True)
 
@@ -426,6 +518,69 @@ def test_scrubbing_is_safe_after_reload_even_though_in_memory_secrets_are_gone(t
     assert "FAKE_SECRET_CANARY" not in str(reloaded.resolved_config)
 
 
+# ---- C04 regression: credential handling must not depend on reload state -----------
+
+def test_reloaded_pending_record_without_explicit_redactor_withholds_error_text_safely(tmp_path):
+    """The original C04 defect: a pending record reloaded before failure loses its
+    `_secret_values` (empty, unverified), so the fake credential embedded in the raised
+    exception's own message reached saved error text unredacted. The fix must not merely
+    confirm the (already-redacted) persisted config is clean -- it must confirm the NEW
+    text generated by the exception itself never leaks the canary either."""
+    storage = _storage(tmp_path)
+    created = start_run(
+        storage, hypothesis="h", phase="M0", resolved_config={"api_key": "FAKE_SECRET_CANARY"}, **NO_DATA
+    )
+    reloaded_for_run = storage.load_record(created.run_id)
+    assert reloaded_for_run._secret_values == []  # reload genuinely lost the in-memory value
+
+    with pytest.raises(RuntimeError), run_context(storage, reloaded_for_run):
+        raise RuntimeError("request failed for key FAKE_SECRET_CANARY")
+
+    final = storage.load_record(created.run_id)
+    assert "FAKE_SECRET_CANARY" not in final.error
+    assert "FAKE_SECRET_CANARY" not in str(final.resolved_config)
+
+
+def test_reloaded_record_with_explicit_redactor_still_scrubs_the_canary(tmp_path):
+    """Repeat with an explicitly supplied runtime redactor: full (redacted) error text is
+    preserved, proving the redactor -- not reload luck -- drives the behavior."""
+    from rsys.experiments import SecretRedactor
+
+    storage = _storage(tmp_path)
+    secret_config = {"api_key": "FAKE_SECRET_CANARY"}
+    created = start_run(storage, hypothesis="h", phase="M0", resolved_config=secret_config, **NO_DATA)
+    reloaded_for_run = storage.load_record(created.run_id)
+    redactor = SecretRedactor.from_resolved_config(secret_config)
+
+    with pytest.raises(RuntimeError), run_context(storage, reloaded_for_run, redactor=redactor):
+        raise RuntimeError("request failed for key FAKE_SECRET_CANARY")
+
+    final = storage.load_record(created.run_id)
+    assert "FAKE_SECRET_CANARY" not in final.error
+    assert "REDACTED" in final.error
+    assert "request failed" in final.error  # the safe part of the message is preserved, not withheld
+
+
+def test_canary_embedded_in_nested_exception_cause_is_not_persisted_after_reload(tmp_path):
+    storage = _storage(tmp_path)
+    created = start_run(
+        storage, hypothesis="h", phase="M0", resolved_config={"api_key": "FAKE_SECRET_CANARY"}, **NO_DATA
+    )
+    reloaded_for_run = storage.load_record(created.run_id)
+
+    def _raise_nested():
+        try:
+            raise ValueError("inner failure using FAKE_SECRET_CANARY")
+        except ValueError as inner:
+            raise RuntimeError("outer failure") from inner
+
+    with pytest.raises(RuntimeError), run_context(storage, reloaded_for_run):
+        _raise_nested()
+
+    final = storage.load_record(created.run_id)
+    assert "FAKE_SECRET_CANARY" not in final.error
+
+
 # ---- Complete provenance (M0-02 #5 / H2 content provenance) -----------------
 
 def test_run_record_captures_code_and_dependency_provenance(tmp_path):
@@ -477,6 +632,35 @@ def test_compute_source_fingerprint_excludes_credential_shaped_files(tmp_path):
 
 def test_compute_code_revision_returns_sentinel_outside_a_git_repo(tmp_path):
     assert compute_code_revision(repo_root=tmp_path).startswith("unavailable:")
+
+
+# ---- C01 regression: a nested dir literally named "data" was wrongly excluded wholesale ----
+
+def test_compute_source_fingerprint_includes_a_nested_data_package(tmp_path):
+    """Before the fix, `_is_excluded` treated *any* path component named "data" as an output
+    directory, so every file under `src/rsys/data/` (a real source package) was silently
+    dropped from the fingerprint regardless of content."""
+    repo = tmp_path / "repo_data_pkg"
+    pkg_dir = repo / "src" / "rsys" / "data"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "bar_builder.py").write_text("x = 1\n", encoding="utf-8")
+
+    hash_before, manifest_before = compute_source_fingerprint(repo_root=repo)
+    assert "src/rsys/data/bar_builder.py" in manifest_before
+
+    (pkg_dir / "bar_builder.py").write_text("x = 2\n", encoding="utf-8")
+    hash_after, _ = compute_source_fingerprint(repo_root=repo)
+    assert hash_after != hash_before
+
+
+def test_compute_source_fingerprint_still_excludes_root_level_data_and_runs(tmp_path):
+    """Root-level /data and /runs output directories are excluded; neither is reachable by the
+    declared source globs today, but the policy itself must not depend on glob coincidence."""
+    from rsys.experiments import _is_excluded
+
+    assert _is_excluded(Path("data/cache.json"))
+    assert _is_excluded(Path("runs/some-run/record.json"))
+    assert not _is_excluded(Path("src/rsys/data/bar_builder.py"))
 
 
 def test_compute_dependency_lock_hash_returns_sentinel_without_lockfile(tmp_path):

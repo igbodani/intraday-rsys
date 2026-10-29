@@ -543,6 +543,16 @@ def test_versioned_method_reference_is_accepted_for_a_gate_method_field():
     assert "promotion_gates.uncertainty.resampling_design" not in {b.field_path for b in result.blockers}
 
 
+def test_syntactically_valid_but_unregistered_method_reference_is_rejected():
+    """C08 regression: 'nonexistent_method:v999' matches the name:vN pattern but was never
+    registered, so a naming convention alone must not resolve a declared method."""
+    data = _research_dict()
+    data["promotion_gates"] = {"uncertainty": {"resampling_design": "nonexistent_method:v999"}}
+    config = parse_config(data)
+    result = validate_config(config)
+    assert any(b.field_path == "promotion_gates.uncertainty.resampling_design" for b in result.blockers)
+
+
 # ---- H1 regression: controlled decoding failures and safe error messages ----
 
 def test_invalid_utf8_file_is_a_controlled_failure(tmp_path):
@@ -568,4 +578,120 @@ def test_registry_blocker_reason_does_not_leak_the_resolved_value():
     # Decimal parsing itself rejects a non-numeric string before the registry ever sees it;
     # the pydantic type error must still not echo the raw value.
     assert "FAKE_SECRET_CANARY_NOT_A_NUMBER" not in str(exc_info.value)
+
+
+# ---- R3-A: replay profile settings (docs/REPLAY_CORRECTIONS_AND_R3_HANDOFF.md 7.1) -----
+
+REPLAY_BAR_CONFIG = REPO_ROOT / "configs" / "replay_bar_fixture.yaml"
+REPLAY_TRADE_CONFIG = REPO_ROOT / "configs" / "replay_trade_fixture.yaml"
+
+
+def _replay_dict() -> dict[str, Any]:
+    return copy.deepcopy(yaml.safe_load(REPLAY_BAR_CONFIG.read_text(encoding="utf-8")))
+
+
+def test_replay_bar_fixture_config_has_no_blockers():
+    config = load_config(REPLAY_BAR_CONFIG)
+    result = validate_config(config)
+    assert result.ok
+    assert result.blockers == []
+
+
+def test_replay_trade_fixture_config_has_no_blockers():
+    config = load_config(REPLAY_TRADE_CONFIG)
+    result = validate_config(config)
+    assert result.ok
+    assert result.blockers == []
+
+
+def test_a_legacy_fixture_config_is_not_accepted_as_a_replay_config():
+    """A legacy fixture need not become a replay fixture: switching `mode` to `replay` must not
+    let a fixture's own fields silently satisfy the replay profile's required fields."""
+    data = _fixture_dict()
+    data["mode"] = "replay"
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("replay.input_mode", "streaming_live"),
+        ("replay.ordering_profile", "bar_v2"),
+        ("replay.availability_model", "captured_live"),
+        ("bars.authority", "both"),
+        ("interval_policy.session", "premarket"),
+        ("interval_policy.unit_policy", "adjusted"),
+        ("revision.revision_policy", "recompute_current"),
+        ("observation.mode", "per_trade"),
+        ("execution.data_basis", "bar_close"),
+    ],
+)
+def test_replay_unsupported_setting_value_rejected(path, value):
+    data = _replay_dict()
+    _set_path(data, path, value)
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_closed_only_observation_requires_completed_bar_boundary_cadence():
+    data = _replay_dict()
+    _set_path(data, "observation.mode", "closed_only")
+    _set_path(data, "observation.cadence", "availability_batch")
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_enabled_quotes_without_a_freshness_policy_is_rejected():
+    data = _replay_dict()
+    _set_path(data, "quotes.enabled", True)
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_enabled_quotes_with_explicit_policy_is_accepted():
+    data = _replay_dict()
+    data["quotes"] = {"enabled": True, "freshness_limit_ms": 500, "quality_policy": "synthetic_test_quote_policy:v1"}
+    parse_config(data)  # must not raise
+
+
+def test_replay_disabled_quotes_is_a_complete_supported_configuration():
+    data = _replay_dict()
+    assert data["quotes"] == {"enabled": False}
+    config = parse_config(data)
+    assert config.quotes.enabled is False
+
+
+def test_replay_unknown_field_rejected():
+    data = _replay_dict()
+    data["unexpected_field"] = 1
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_unimplemented_schema_version_rejected():
+    data = _replay_dict()
+    data["schema_version"] = 999
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_network_allowed_must_be_false():
+    data = _replay_dict()
+    data["network_allowed"] = True
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_replay_retention_limit_must_be_positive_when_set():
+    data = _replay_dict()
+    _set_path(data, "revision.retention_limit", 0)
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_cli_validate_exits_zero_for_both_replay_fixture_configs():
+    assert main(["validate", "--config", str(REPLAY_BAR_CONFIG)]) == EXIT_SUCCESS
+    assert main(["validate", "--config", str(REPLAY_TRADE_CONFIG)]) == EXIT_SUCCESS
+
 

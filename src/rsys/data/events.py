@@ -17,9 +17,24 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from rsys.data.timestamps import parse_utc_timestamp_ns
+from rsys.data.timestamps import INTERVAL_DURATIONS_NS, parse_utc_timestamp_ns
+
+
+def _positive_finite(v: Decimal) -> bool:
+    if isinstance(v, bool):
+        return False
+    try:
+        return v.is_finite() and v > 0
+    except (TypeError, AttributeError):
+        return False
+
+
+def _reject_bool_int(v: object) -> object:
+    if isinstance(v, bool):
+        raise ValueError("boolean values are not accepted for this numeric field")  # noqa: TRY004 (pydantic only converts ValueError/AssertionError)
+    return v
 
 
 class EventKind(StrEnum):
@@ -79,7 +94,19 @@ class MarketEvent(BaseModel):
     def _check_availability_not_before_event(self) -> MarketEvent:
         if self.available_at_ns < self.event_time_ns:
             raise ValueError("available_at_ns cannot precede event_time_ns (no future value exposed early)")
+        if self.received_at_ns is not None:
+            if self.timing_label != TimingLabel.RECORDED:
+                raise ValueError("received_at_ns requires actual recorded-receipt evidence (timing_label=RECORDED)")
+            if self.available_at_ns < self.received_at_ns:
+                raise ValueError("available_at_ns cannot precede received_at_ns (a recorded event is not"
+                                 " visible before its own receipt)")
         return self
+
+    @field_validator("event_time_ns", "received_at_ns", "available_at_ns", "source_sequence", "revision",
+                      mode="before")
+    @classmethod
+    def _reject_bool_timing_fields(cls, v: object) -> object:
+        return _reject_bool_int(v)
 
 
 class TradeEvent(MarketEvent):
@@ -89,6 +116,20 @@ class TradeEvent(MarketEvent):
     trade_id: str
     venue: str
     conditions: tuple[str, ...] = ()
+    tape: str | None = None  # preserved verbatim (C10); never stripped or treated as blank
+
+    @field_validator("price", "size", mode="before")
+    @classmethod
+    def _reject_bool_price_size(cls, v: object) -> object:
+        return _reject_bool_int(v)
+
+    @model_validator(mode="after")
+    def _check_price_and_size_positive(self) -> TradeEvent:
+        if not _positive_finite(self.price):
+            raise ValueError("trade price must be a finite positive value")
+        if not _positive_finite(self.size):
+            raise ValueError("trade size must be a finite positive value (a cancellation is a distinct event)")
+        return self
 
 
 class TradeCorrectionEvent(MarketEvent):
@@ -99,11 +140,16 @@ class TradeCorrectionEvent(MarketEvent):
     action: Literal["correct", "cancel"]
     corrected_price: Decimal | None = None
     corrected_size: Decimal | None = None
+    conditions: tuple[str, ...] = ()
+    tape: str | None = None  # preserved verbatim (C10); never stripped or treated as blank
 
     @model_validator(mode="after")
     def _check_correction_payload(self) -> TradeCorrectionEvent:
-        if self.action == "correct" and (self.corrected_price is None or self.corrected_size is None):
-            raise ValueError("a 'correct' action requires corrected_price and corrected_size")
+        if self.action == "correct":
+            if self.corrected_price is None or self.corrected_size is None:
+                raise ValueError("a 'correct' action requires corrected_price and corrected_size")
+            if not _positive_finite(self.corrected_price) or not _positive_finite(self.corrected_size):
+                raise ValueError("a replacement price/size must be a finite positive value")
         if self.action == "cancel" and (self.corrected_price is not None or self.corrected_size is not None):
             raise ValueError("a 'cancel' action must not carry corrected_price/corrected_size")
         return self
@@ -134,10 +180,33 @@ class ProviderBarEvent(MarketEvent):
     adjustment_mode: str
     bar_revision: int = 1
 
+    @field_validator("bar_start_ns", "bar_end_ns", "trade_count", "bar_revision", mode="before")
+    @classmethod
+    def _reject_bool_bar_fields(cls, v: object) -> object:
+        return _reject_bool_int(v)
+
     @model_validator(mode="after")
     def _check_bar_bounds(self) -> ProviderBarEvent:
         if self.bar_end_ns <= self.bar_start_ns:
             raise ValueError("bar_end_ns must be after bar_start_ns")
+        expected_duration = INTERVAL_DURATIONS_NS.get(self.interval)
+        if expected_duration is not None and (self.bar_end_ns - self.bar_start_ns) != expected_duration:
+            raise ValueError(f"bar duration does not match the declared interval {self.interval!r}")
+        # A completed bar cannot be visible before its own interval ends (C05): the base
+        # envelope only checks availability against event_time_ns, which a provider could set
+        # to bar_start -- that would let an in-progress update masquerade as a completed bar.
+        if self.available_at_ns < self.bar_end_ns:
+            raise ValueError("a completed provider bar cannot be available before bar_end_ns")
+        prices = (self.open, self.high, self.low, self.close)
+        if any(not _positive_finite(p) for p in prices):
+            raise ValueError("OHLC prices must be finite and positive")
+        lo, hi = min(self.open, self.close), max(self.open, self.close)
+        if not (self.low <= lo <= hi <= self.high):
+            raise ValueError("OHLC values are inconsistent (low <= min(o,c) <= max(o,c) <= high required)")
+        if isinstance(self.volume, bool) or self.volume < 0:
+            raise ValueError("volume must be nonnegative")
+        if self.trade_count is not None and self.trade_count < 0:
+            raise ValueError("trade_count must be nonnegative")
         return self
 
 
@@ -147,6 +216,20 @@ class CorporateActionEvent(MarketEvent):
     ratio: Decimal
     effective_at_ns: int
     known_at_ns: int
+
+    @field_validator("effective_at_ns", "known_at_ns", mode="before")
+    @classmethod
+    def _reject_bool_action_fields(cls, v: object) -> object:
+        return _reject_bool_int(v)
+
+    @model_validator(mode="after")
+    def _check_action_validity(self) -> CorporateActionEvent:
+        if not _positive_finite(self.ratio):
+            raise ValueError("ratio must be a finite positive value")
+        dispatch_at_ns = max(self.effective_at_ns, self.known_at_ns)
+        if self.available_at_ns < dispatch_at_ns:
+            raise ValueError("an action cannot be available before max(effective_at_ns, known_at_ns)")
+        return self
 
 
 class TimerEvent(MarketEvent):

@@ -378,9 +378,117 @@ class ResearchConfig(BaseModel):
         return v
 
 
-RsysConfig = FixtureConfig | ResearchConfig
+# ---- Replay profile (R3-A): validated, offline-synthetic replay settings ----
+# A legacy fixture (mode: fixture) need not become a replay fixture; this is a distinct,
+# isolated profile with its own required fields (docs/REPLAY_CORRECTIONS_AND_R3_HANDOFF.md 7.1).
 
-_PROFILES: dict[str, type[BaseModel]] = {"fixture": FixtureConfig, "research": ResearchConfig}
+class ReplayInputConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Unsupported modes fail explicitly (pydantic Literal) rather than silently defaulting.
+    input_mode: Literal["completed_bar", "historical_trade", "recorded_event"]
+    ordering_profile: Literal["bar_v1", "trade_replay_v1"]
+    # Never label reconstructed/modeled timing as captured-live.
+    availability_model: Literal["recorded_receipt", "modeled_availability"]
+
+
+class BarsAuthorityConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Exactly one authoritative source per series.
+    authority: Literal["provider_publication", "trade_builder"]
+    rule_set_id: str
+
+
+class IntervalPolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    interval: str
+    # Supported v1 behavior (D06/D07): regular-session data only.
+    session: Literal["regular"]
+    # Matches the decided units policy (D20) already enforced by DataAdjustmentConfig.
+    unit_policy: Literal["raw", "splits_effective_and_known_asof"]
+
+
+class RevisionRetentionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The only implemented version-selection semantics (C06's fix): never recompute-and-backdate.
+    revision_policy: Literal["latest_version_asof"]
+    retention_limit: OptionalNonBoolInt = None
+    unavailable_history_policy: Literal["typed_unavailable"]
+
+    @field_validator("retention_limit")
+    @classmethod
+    def _check_retention_limit(cls, v: int | None) -> int | None:
+        if v is not None and not _positive_int(v):
+            raise ValueError("retention_limit must be a positive integer when set")
+        return v
+
+
+class ObservationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["closed_only", "intrabar"]
+    # Unsupported per-trade/quote cadence is rejected here, not silently downgraded.
+    cadence: Literal["completed_bar_boundary", "availability_batch"]
+
+    @model_validator(mode="after")
+    def _check_mode_cadence_compatibility(self) -> ObservationConfig:
+        if self.mode == "closed_only" and self.cadence != "completed_bar_boundary":
+            raise ValueError("observation.mode=closed_only requires cadence=completed_bar_boundary")
+        return self
+
+
+class QuoteSettingsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    freshness_limit_ms: OptionalNonBoolInt = None
+    quality_policy: str | None = None
+
+    @model_validator(mode="after")
+    def _check_enabled_requires_explicit_policy(self) -> QuoteSettingsConfig:
+        if self.enabled and (self.freshness_limit_ms is None or self.quality_policy is None):
+            raise ValueError(
+                "quotes.enabled=true requires an explicit freshness_limit_ms and quality_policy "
+                "(disabled is a supported complete configuration; do not silently default)"
+            )
+        if self.freshness_limit_ms is not None and not _positive_int(self.freshness_limit_ms):
+            raise ValueError("freshness_limit_ms must be a positive integer when set")
+        return self
+
+
+class ReplayExecutionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Recorded as explicitly inactive in R3 (7.1); later work distinguishes bar/subsequent-trade
+    # execution bases.
+    data_basis: Literal["inactive"]
+
+
+class ReplayConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    mode: Literal["replay"]
+    evidence_type: Literal["synthetic_only"]
+    network_allowed: Literal[False]
+    input: str
+    replay: ReplayInputConfig
+    bars: BarsAuthorityConfig
+    interval_policy: IntervalPolicyConfig
+    revision: RevisionRetentionConfig
+    observation: ObservationConfig
+    quotes: QuoteSettingsConfig
+    execution: ReplayExecutionConfig
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _check_schema_version(cls, v: Any) -> Any:
+        if isinstance(v, bool) or v not in _IMPLEMENTED_SCHEMA_VERSIONS:
+            raise ValueError("schema_version must be one of the implemented schema versions")
+        return v
+
+
+RsysConfig = FixtureConfig | ResearchConfig | ReplayConfig
+
+_PROFILES: dict[str, type[BaseModel]] = {
+    "fixture": FixtureConfig, "research": ResearchConfig, "replay": ReplayConfig,
+}
 
 
 def load_raw(path: str | Path) -> dict[str, Any]:
@@ -437,8 +545,9 @@ def _get_by_path(tree: dict[str, Any], dotted_path: str) -> Any:
 
 
 def validate_config(config: RsysConfig) -> ConfigValidationResult:
-    """Run registry-driven blocker/range checks. Fixture profiles have no registry-tracked fields."""
-    if isinstance(config, FixtureConfig):
+    """Run registry-driven blocker/range checks. Fixture and replay profiles are offline
+    synthetic by construction and have no registry-tracked fields."""
+    if isinstance(config, (FixtureConfig, ReplayConfig)):
         return ConfigValidationResult(ok=True, blockers=[])
 
     tree = config.model_dump(by_alias=True, mode="json")

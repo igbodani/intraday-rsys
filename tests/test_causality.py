@@ -29,18 +29,21 @@ _COMMON = {
 
 
 def _bar(event_id, instrument_id, at_ns, close):
+    open_ = Decimal(100)
+    high = max(open_, close) + 1  # always consistent regardless of the close passed in
+    low = min(open_, close) - 1
     return ProviderBarEvent(
         **_COMMON, event_id=event_id, instrument_id=instrument_id, event_time_ns=at_ns, available_at_ns=at_ns,
         bar_start_ns=at_ns - 60_000_000_000, bar_end_ns=at_ns, interval="1Min",
-        open=Decimal(100), high=Decimal(101), low=Decimal(99), close=close, volume=Decimal(10),
+        open=open_, high=high, low=low, close=close, volume=Decimal(10),
         adjustment_mode="raw",
     )
 
 
-def _trade(event_id, instrument_id, at_ns, price):
+def _trade(event_id, instrument_id, at_ns, price, *, source_sequence=None):
     return TradeEvent(
         **_COMMON, event_id=event_id, instrument_id=instrument_id, event_time_ns=at_ns, available_at_ns=at_ns,
-        price=price, size=Decimal(10), trade_id=event_id, venue="V",
+        price=price, size=Decimal(10), trade_id=event_id, venue="V", source_sequence=source_sequence,
     )
 
 
@@ -129,6 +132,45 @@ def test_closed_bars_result_is_a_fresh_list_each_call():
     second = view.closed_bars("AAA", K)
     assert "tampered" not in second
     assert len(second) == 2
+
+
+# ---- C07 regression: an availability tie must resolve to the LAST dispatched event ----
+
+def test_latest_trade_at_a_tied_availability_returns_the_last_dispatched_not_the_first():
+    """The original C07 defect: two trades sharing one `available_at_ns` dispatch in sequence
+    order, but `latest_trade` used `max(..., key=available_at_ns)`, which returns the FIRST
+    candidate achieving the max on a tie -- silently picking the wrong trade whenever the
+    earlier-sequenced trade happened to come first in the underlying event list."""
+    early_in_list = _trade("dispatched-second", "AAA", T0, Decimal(999), source_sequence=5)
+    late_in_list = _trade("dispatched-first", "AAA", T0, Decimal(100), source_sequence=1)
+    # Deliberately constructed so the correctly-first-dispatched trade appears SECOND in the
+    # raw input list; only `replay_order` (by source_sequence) establishes the true order.
+    ordered = replay_order([early_in_list, late_in_list], ReplayProfile.TRADE_REPLAY_V1)
+    view = ReplayView(ordered)
+
+    latest = view.latest_trade("AAA", T0)
+    assert latest is not None
+    assert latest.event_id == "dispatched-second"  # the one with the higher source_sequence
+
+
+def test_latest_quote_at_a_tied_availability_returns_the_last_dispatched():
+    from rsys.data.events import QuoteEvent
+
+    def _quote(event_id, at_ns, *, source_sequence):
+        return QuoteEvent(
+            **_COMMON, event_id=event_id, instrument_id="AAA", event_time_ns=at_ns, available_at_ns=at_ns,
+            bid_price=Decimal(99), bid_size=Decimal(1), ask_price=Decimal(101), ask_size=Decimal(1),
+            venue="V", source_sequence=source_sequence,
+        )
+
+    first_quote = _quote("q-first", T0, source_sequence=1)
+    second_quote = _quote("q-second", T0, source_sequence=2)
+    ordered = replay_order([second_quote, first_quote], ReplayProfile.TRADE_REPLAY_V1)
+    view = ReplayView(ordered)
+
+    latest = view.latest_quote("AAA", T0)
+    assert latest is not None
+    assert latest.event_id == "q-second"
 
 
 def test_market_event_is_frozen_against_in_place_mutation():

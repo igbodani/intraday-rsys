@@ -28,13 +28,15 @@ Keep `orb_close_cross_v1` and VWAP touch-and-hold on completed-bar decisions ini
 
 The independent review reproduced 126 existing passing tests, fixture validation exit 0, and 44 pending research blockers with exit 2. It did not reproduce a fresh frozen `uv` installation or Ruff run because the required Linux tooling/packages were unavailable locally. Those checks remain required in the implementation environment. Passing tests did not cover all the defects below.
 
-- [ ] **P0 — Reconcile docs and ticket scope.** Register the trade-driven bar requirement, input modes, and unresolved provider details.
-- [ ] **H1 — Finish M0-01 validation.** Close the verified type/schema/gate/error gaps.
-- [ ] **H2 — Finish M0-02 evidence.** Fix source fingerprints, interruption/recovery, transactional consistency, and credential handling.
-- [ ] **D1 — Finish M1-01 data contracts.** Normalize bars/events/timestamps and implement coverage/exclusion records, including DATA-002.
-- [ ] **R1 — M1-02a clock and views.** Implement chronological, deterministic replay with immutable bounded access.
-- [ ] **R2 — M1-02b bar builder.** Build evolving bars from trade fixtures and preserve revisions/corrections.
-- [ ] **R3 — M1-02c integrated replay.** Wire bars/trades and optional quote state; prove causal prefix invariance and deterministic replay.
+**Status (2026-10-29): every row below is implemented.** P0 through R3 were built across several passes, then `docs/REPLAY_CORRECTIONS_AND_R3_HANDOFF.md` reproduced and fixed ten further defects/inspection gaps (C01-C10) on top of that baseline and completed R3's remaining quote-state/parity/CLI scope. Full suite: 348 tests passing (`uv run pytest tests/ -q`); `uv run ruff check .` clean. M2 (ledger, execution, scanner, strategies) remains entirely unimplemented and is the next dependency.
+
+- [x] **P0 — Reconcile docs and ticket scope.** Register the trade-driven bar requirement, input modes, and unresolved provider details.
+- [x] **H1 — Finish M0-01 validation.** Close the verified type/schema/gate/error gaps.
+- [x] **H2 — Finish M0-02 evidence.** Fix source fingerprints, interruption/recovery, transactional consistency, and credential handling.
+- [x] **D1 — Finish M1-01 data contracts.** Normalize bars/events/timestamps and implement coverage/exclusion records, including DATA-002.
+- [x] **R1 — M1-02a clock and views.** Implement chronological, deterministic replay with immutable bounded access.
+- [x] **R2 — M1-02b bar builder.** Build evolving bars from trade fixtures and preserve revisions/corrections.
+- [x] **R3 — M1-02c integrated replay.** Wire bars/trades and optional quote state; prove causal prefix invariance and deterministic replay.
 - [ ] **M2-01 — Ledger and conservative bar execution.** Run F01–F17 through actual account code.
 - [ ] **M2-01T — Simple trade-event execution adapter.** Required before evaluating trade-input strategy P&L; it may follow the bar-based research path.
 - [ ] **M2-02/03 — Scanner, ORB, VWAP.** Keep each contribution independently replaceable.

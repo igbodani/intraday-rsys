@@ -152,13 +152,28 @@ class ReplayStream:
             return None
         return sort_key(self._items[self._dispatched_count - 1], self._profile)
 
+    def peek(self) -> MarketEvent | None:
+        """The next not-yet-dispatched event without consuming it, or `None` at end of stream."""
+        if self._dispatched_count >= len(self._items):
+            return None
+        return self._items[self._dispatched_count]
+
     def insert_derived(self, event: MarketEvent) -> None:
-        """Insert a derived event (e.g. a bar revision produced while processing a correction)."""
+        """Insert a derived event (e.g. a bar revision produced while processing a correction).
+
+        C07: only a strictly later `(available_at_ns, phase)` pair is ever accepted -- never the
+        same phase at the same availability (even if a full sort key, including sequence/tiebreak,
+        would have sorted it after what was already dispatched) and never an earlier one. A
+        derived publication at phase 37 (BAR_UPDATE_PUBLISH) produced while dispatching phase 35
+        (MARKET_DATA_APPLY) at the SAME availability instant is explicitly allowed by this rule,
+        since phase strictly increases even though availability does not.
+        """
         key = sort_key(event, self._profile)
         last_key = self.last_dispatched_key
-        if last_key is not None and key <= last_key:
+        if last_key is not None and (key[0], key[1]) <= (last_key[0], last_key[1]):
             raise LateInsertionError(
-                f"derived event {event.event_id!r} targets an already-dispatched bucket"
+                f"derived event {event.event_id!r} targets an already-dispatched "
+                f"(availability, phase) bucket"
             )
         remaining = self._items[self._dispatched_count:]
         remaining.append(event)

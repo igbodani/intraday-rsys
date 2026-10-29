@@ -39,3 +39,9 @@ def ns_to_canonical_iso(ns: int) -> str:
     seconds, remainder_ns = divmod(ns, 1_000_000_000)
     base = datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%S")
     return f"{base}.{remainder_ns:09d}+00:00"
+
+
+# Declared bucket durations for interval-alignment validation; extending beyond these
+# requires its own versioned entry, not a silent assumption (D05: 1-minute baseline in v1).
+# Lives here (not in bars.py) so both bars.py and events.py can import it without a cycle.
+INTERVAL_DURATIONS_NS: dict[str, int] = {"1Min": 60_000_000_000}

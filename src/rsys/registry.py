@@ -7,6 +7,7 @@ with those two files if they change.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections.abc import Callable
@@ -88,11 +89,58 @@ def _non_empty_str_list(v: Any) -> bool:
 _METHOD_REFERENCE_RE = re.compile(r"^[a-z][a-z0-9_]*:v[0-9]+$")
 
 
-def _is_method_reference(v: Any) -> bool:
-    """A gate 'method' field must cite a declared, versioned spec (e.g. 'block_bootstrap:v1'),
-    not an arbitrary placeholder string like 'defined' -- that would silently invent a method.
+@dataclass(frozen=True)
+class MethodSpec:
+    """One declared method/specification a gate field may cite.
+
+    `evidence_class` distinguishes a method registered purely for synthetic/software
+    tests from one actually approved for a research-profile gate; none are
+    research-approved yet (D17 remains open), so every current entry is fixture-only
+    and can never satisfy a research gate regardless of its reference syntax (C08).
     """
-    return isinstance(v, str) and _METHOD_REFERENCE_RE.fullmatch(v) is not None
+
+    method_id: str
+    version: int
+    evidence_class: str  # "fixture_only" is the only value currently populated
+    content_hash: str  # stands in for a real spec/content hash once one is written
+
+
+def _method_spec(ref: str) -> MethodSpec:
+    method_id, _, version_part = ref.rpartition(":v")
+    return MethodSpec(
+        method_id=method_id, version=int(version_part), evidence_class="fixture_only",
+        content_hash=hashlib.sha256(ref.encode("utf-8")).hexdigest(),
+    )
+
+
+# Declared fixture-only method references usable in synthetic tests/examples. A reference
+# merely matching `name:vN` syntax is not registered here and must still block (C08); the
+# in-repo full-synthetic-profile test exercises exactly this set.
+_DECLARED_METHOD_REFS = (
+    "synthetic_test_block_bootstrap:v1",
+    "synthetic_test_net_return:v1",
+    "synthetic_test_paired_delta:v1",
+    "synthetic_test_ci_excludes_zero:v1",
+    "synthetic_test_still_passes:v1",
+    "synthetic_test_max_30pct_one_symbol:v1",
+    "synthetic_test_herfindahl:v1",
+    "synthetic_test_min_20_trades:v1",
+    "synthetic_test_halt_and_review:v1",
+)
+
+METHOD_REGISTRY: dict[str, MethodSpec] = {ref: _method_spec(ref) for ref in _DECLARED_METHOD_REFS}
+
+
+def _is_method_reference(v: Any) -> bool:
+    """A gate 'method' field must resolve to a declared, registered method specification
+    (C08): a syntactically well-formed but unregistered reference (e.g. 'nonexistent_method:v999')
+    must still block, not merely match the naming pattern. No currently registered method is
+    research-approved, so this can never satisfy a research-profile gate regardless of syntax.
+    """
+    if not isinstance(v, str) or _METHOD_REFERENCE_RE.fullmatch(v) is None:
+        return False
+    spec = METHOD_REGISTRY.get(v)
+    return spec is not None and spec.evidence_class == "fixture_only"
 
 
 # Field paths use dotted notation relative to the research config root.

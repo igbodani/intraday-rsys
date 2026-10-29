@@ -27,9 +27,11 @@ Status: **Decided** = established direction; **Proposed** = specific candidate f
 | D21 | Ranking evidence storage | Proposed | Compact per-decision snapshots with deterministic reconstruction; measure storage and enable full snapshots only for declared diagnostic runs | Scanner/report implementation |
 | D22 | Trade-driven in-progress bars | Open | Requested capability (`IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md`): when input is individual trades, construct an evolving bar from only the trades available so far, using a versioned provider/feed-specific aggregation rule set; keep completed-bar replay and optional quote state as separate, non-additive inputs | Replay (R1–R3) design; exact feed, timestamp interpretation, delivery/correction history, condition-code rules, revision retention and quote access/entitlement remain unresolved |
 
-## Registered replay/data settings (proposed new fields, not populated; D22)
+**D22 software-capability note (2026-10-29):** the synthetic/software side of this capability (forming bars, an immutable version store, optional quote state, a `SeriesRouter`/`ReplayRunner`) is now implemented and tested (`docs/REPLAY_CORRECTIONS_AND_R3_HANDOFF.md` R3-B). D22 stays **Open** because its provider-facing dependencies -- real feed entitlement, verified condition-code eligibility table, delivery/correction history and quote access -- remain unresolved and blocked on D12's audit; `FixtureBarRuleSet` and the offline parity comparator are declared fixture-only, never a substitute for that audit.
 
-Per `IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 9 -- declared as required interface points for R1–R3, not silently defaulted:
+## Registered replay/data settings (implemented in `src/rsys/config.py`'s `ReplayConfig`; D22)
+
+Per `IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 9 -- declared as required interface points for R1–R3. As of the 2026-10-29 pass these are typed, validated fields on `ReplayConfig` (`configs/replay_bar_fixture.yaml`/`configs/replay_trade_fixture.yaml`), not merely proposed:
 
 | Setting | Purpose / rule |
 |---|---|
