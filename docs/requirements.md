@@ -58,9 +58,9 @@ IDs are stable. Test paths/names are implementation targets; they have not been 
 | EXP-012 | A concurrent recovery sweep cannot run twice at once; `run_context`'s own finalize never overwrites an outcome another finalizer already committed | `test_recovery_lock_rejects_a_concurrent_sweep`, `test_run_context_does_not_overwrite_an_already_finalized_record` | H2 |
 | REPORT-001 | Report identifies synthetic/market evidence and missing metrics | `test_report_labels` | M2-04 |
 
-## Replay and trade-driven bar requirements (targets; not yet implemented)
+## Replay and trade-driven bar requirements
 
-Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). These are future-ticket targets, not claims of current behavior; none of them is satisfied by the P0/H1 work in this pass.
+Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). `REPLAY-001`, `REPLAY-002` and `REPLAY-004` are implemented (R1); the `BAR-*` and `QUOTE-*` rows and the forming-bar/quote half of `REPLAY-003`/`REPLAY-005` remain future-ticket targets (R2/R3), not current behavior.
 
 | ID | Requirement | Acceptance test / fixture | Ticket |
 |---|---|---|---|
@@ -76,10 +76,10 @@ Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticke
 | BAR-010 | Old snapshots cannot mutate after a new arrival, correction, or split | `test_bar_revisions.py` | R2 |
 | BAR-011 | Source and feed changes cannot double-count or mix bar histories | `test_provider_bar_parity.py` | R3 |
 | BAR-012 | Unsupported split/unit overlap blocks the affected interval | `test_bar_revisions.py` | R2 |
-| REPLAY-001 | Randomly permuted files/pages yield the same output when event identities/order metadata are unchanged | `test_event_order.py` | R1 |
-| REPLAY-002 | Perturbing unavailable future trades, quotes, revisions, or actions cannot change earlier outputs | `test_causality.py` | R1 |
-| REPLAY-003 | Close-only strategies do not receive forming values; opted-in intrabar strategies receive only current snapshots | `test_replay_inputs.py` | R3 |
-| REPLAY-004 | Equal-time batches and derived events follow the frozen phase rules, including boundary plus late trade plus action cases | `test_event_order.py` | R1 |
+| REPLAY-001 | Randomly permuted files/pages yield the same output when event identities/order metadata are unchanged | `test_replay_order_is_independent_of_input_list_order` | R1 |
+| REPLAY-002 | Perturbing unavailable future trades, quotes, revisions, or actions cannot change earlier outputs | `test_future_perturbation_does_not_change_the_honest_decision_through_cutoff`, `test_future_perturbation_harness_catches_a_deliberately_leaky_double` | R1 |
+| REPLAY-003 | Close-only strategies do not receive forming values; opted-in intrabar strategies receive only current snapshots | `test_closed_only_context_has_no_forming_or_trade_access`, `test_intrabar_context_still_has_closed_bars_and_a_bounded_latest_trade`, `test_intrabar_context_forming_bar_is_explicitly_not_yet_implemented` | R1 (forming-bar population itself: R2/R3) |
+| REPLAY-004 | Equal-time batches and derived events follow the frozen phase rules, including boundary plus late trade plus action cases | `test_same_time_batch_includes_every_symbol_with_an_event_at_that_instant`, `test_insert_derived_rejects_an_already_dispatched_bucket`, `test_insert_derived_accepts_a_future_bucket_and_preserves_order` | R1 |
 | REPLAY-005 | Historical revised data without arrival history carries the approximation label | `test_replay_inputs.py` | R3 |
 | QUOTE-001 | Quote-only input never changes a stock trade bar or traded volume | `test_quote_state.py` | R3 |
 | QUOTE-002 | Invalid/stale quotes cannot silently enter quote-dependent signals or execution estimates | `test_quote_state.py` | R3 |
