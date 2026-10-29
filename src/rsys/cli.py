@@ -3,15 +3,21 @@ from docs/contracts.md are registered but not yet built (later tickets)."""
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from rsys.compare_cli import CompareCliError, compare_run_pair
 from rsys.config import ConfigError, ReplayConfig, load_config, validate_config
+from rsys.evaluation import ComparisonError
+from rsys.fixture_cli import FixtureCliError, run_fixture_cli
 from rsys.replay_io import (
     ReplayInputError,
     UnsupportedRuleSetError,
     run_replay_from_config,
 )
+from rsys.report import ReportError, render_report_for_attempt
+from rsys.run_cli import RunConfigError, run_cli_entry
 
 EXIT_SUCCESS = 0
 EXIT_OTHER_FAILURE = 1
@@ -19,7 +25,7 @@ EXIT_INVALID_CONFIG = 2
 EXIT_DATA_ERROR = 3
 EXIT_INVARIANT_FAILURE = 4
 
-_NOT_IMPLEMENTED = ("fixture", "run", "compare", "final-evaluate")
+_NOT_IMPLEMENTED = ("final-evaluate",)
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -88,6 +94,82 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def _cmd_fixture(args: argparse.Namespace) -> int:
+    out_dir = Path("runs") / "fixture" if args.out == "auto" else Path(args.out)
+    try:
+        outcomes, trace_path, manifest_path = run_fixture_cli(args.case, out_dir)
+    except FixtureCliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INVALID_CONFIG
+
+    for outcome in outcomes:
+        status = "ok" if outcome.ok else "MISMATCH"
+        print(f"{status}: {outcome.case_id}")
+        for problem in outcome.problems:
+            print(f"  - {problem}", file=sys.stderr)
+    print(f"trace: {trace_path}")
+    print(f"manifest: {manifest_path}")
+
+    if any(not o.ok for o in outcomes):
+        return EXIT_INVARIANT_FAILURE
+    return EXIT_SUCCESS
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    """Runs a synthetic, standalone ORB/VWAP session (StandaloneRunner) -- NOT the real
+    ReplayRunner/market-data path; see docs/M2_IMPLEMENTATION_STATUS.md."""
+    out_dir = Path("runs") / "run" if args.out == "auto" else Path(args.out)
+    try:
+        summary, run_id, trace_path, manifest_path = run_cli_entry(args.config, out_dir)
+    except RunConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INVALID_CONFIG
+    except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
+        print(f"error: run failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
+        return EXIT_OTHER_FAILURE
+
+    print(f"ok: {len(summary['decisions'])} decision(s), {len(summary['fills'])} fill(s)")
+    print(f"run_id: {run_id}")
+    print(f"trace: {trace_path}")
+    print(f"manifest: {manifest_path}")
+    print(f"starting_equity: {summary['starting_equity']}")
+    print(f"ending_equity: {summary['ending_equity']}")
+    if args.report:
+        try:
+            report_path = render_report_for_attempt(trace_path.parent)
+        except ReportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_DATA_ERROR
+        print(f"report: {report_path}")
+    return EXIT_SUCCESS
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    """Compares two retained `rsys run` (StandaloneRunner) manifests -- NOT `rsys replay`
+    attempts; see docs/M2_IMPLEMENTATION_STATUS.md."""
+    storage_root = Path(args.storage_root)
+    run_a, run_b = args.runs
+    try:
+        result = compare_run_pair(storage_root, run_a, run_b, permitted_difference=args.permitted_difference)
+    except CompareCliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except ComparisonError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INVARIANT_FAILURE
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / "comparison.json"
+    report_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+
+    print(f"ok: compared {run_a} vs {run_b}")
+    print(f"assumption_diffs: {result['assumption_diffs']}")
+    print(f"ending_equity_delta: {result['ending_equity_delta']}")
+    print(f"report: {report_path}")
+    return EXIT_SUCCESS
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rsys")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -100,6 +182,24 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--config", required=True)
     replay.add_argument("--out", default="auto", help="Output directory, or 'auto' to derive one from --config")
     replay.set_defaults(func=_cmd_replay)
+
+    fixture = subparsers.add_parser("fixture", help="Run F01-F17 synthetic account/execution fixture cases")
+    fixture.add_argument("--case", required=True, help="Case id (e.g. F01) or 'all'")
+    fixture.add_argument("--out", default="auto", help="Output directory, or 'auto' to derive one")
+    fixture.set_defaults(func=_cmd_fixture)
+
+    run = subparsers.add_parser("run", help="Run a synthetic standalone ORB/VWAP session (not real ReplayRunner data)")
+    run.add_argument("--config", required=True, help="Path to a synthetic session JSON config")
+    run.add_argument("--out", default="auto", help="Output directory, or 'auto' to derive one")
+    run.add_argument("--report", action="store_true", help="Also render a portable report.html alongside the attempt")
+    run.set_defaults(func=_cmd_run)
+
+    compare = subparsers.add_parser("compare", help="Compare two retained `rsys run` StandaloneRunner manifests")
+    compare.add_argument("--storage-root", required=True, help="The --out directory used by the two `rsys run` invocations")
+    compare.add_argument("--runs", nargs=2, required=True, metavar=("RUN_ID_A", "RUN_ID_B"))
+    compare.add_argument("--permitted-difference", default=None, help="The one assumption field allowed to differ")
+    compare.add_argument("--out", required=True, help="Output directory for comparison.json")
+    compare.set_defaults(func=_cmd_compare)
 
     for name in _NOT_IMPLEMENTED:
         stub = subparsers.add_parser(name, help="Not implemented yet (later ticket)")
