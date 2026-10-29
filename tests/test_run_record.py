@@ -1,10 +1,14 @@
+import multiprocessing
+import time
+
 import pytest
 
 from rsys import storage as storage_module
 from rsys.experiments import (
     canonical_hash,
-    compute_code_hash,
+    compute_code_revision,
     compute_dependency_lock_hash,
+    compute_source_fingerprint,
     extract_secret_values,
     mark_interrupted,
     redact_secrets,
@@ -15,6 +19,7 @@ from rsys.storage import (
     FrozenFieldError,
     IllegalTransitionError,
     InvalidRunIdError,
+    RecoveryInProgressError,
     RunAlreadyExistsError,
     RunStorage,
 )
@@ -76,11 +81,10 @@ def test_secrets_are_excluded_from_persisted_record(tmp_path):
     secret_config = {"provider": "alpaca", "api_key": "super-secret-value", "nested": {"auth_token": "also-secret"}}
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config=secret_config, **NO_DATA)
 
-    record_path = storage.root_dir / record.run_id / "record.json"
-    contents = record_path.read_text(encoding="utf-8")
-    assert "super-secret-value" not in contents
-    assert "also-secret" not in contents
-    assert "REDACTED" in contents
+    reloaded = storage.load_record(record.run_id)
+    assert "super-secret-value" not in str(reloaded.resolved_config)
+    assert "also-secret" not in str(reloaded.resolved_config)
+    assert reloaded.resolved_config["api_key"] == "REDACTED"
 
 
 def test_redact_secrets_matches_key_patterns():
@@ -94,15 +98,17 @@ def test_redact_secrets_does_not_false_positive_on_ranking_sort_key():
     assert redacted == {"ranking_sort_key": "rvol_desc", "quantity_step": "1"}
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    ["apiKey", "authToken", "clientSecret", "Authorization", "ALPACA_API_KEY", "X-Api-Key", "Bearer"],
+)
+def test_redact_secrets_catches_camelcase_and_header_style_canaries(field_name):
+    redacted = redact_secrets({field_name: "shh"})
+    assert redacted[field_name] == "REDACTED"
+
+
 def test_canonical_hash_is_order_independent():
     assert canonical_hash({"a": 1, "b": 2}) == canonical_hash({"b": 2, "a": 1})
-
-
-def test_atomic_write_leaves_no_temp_files(tmp_path):
-    storage = _storage(tmp_path)
-    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
-    run_dir = storage.root_dir / record.run_id
-    assert not list(run_dir.glob("*.tmp"))
 
 
 # ---- Immutable inputs (D04/M0-02 #1) ----------------------------------------
@@ -111,6 +117,23 @@ def test_start_run_requires_data_provenance_or_explicit_reason(tmp_path):
     storage = _storage(tmp_path)
     with pytest.raises(ValueError):
         start_run(storage, hypothesis="h", phase="M0", resolved_config={})
+
+
+def test_start_run_rejects_blank_data_identity_and_blank_reason(tmp_path):
+    storage = _storage(tmp_path)
+    with pytest.raises(ValueError):
+        start_run(storage, hypothesis="h", phase="M0", resolved_config={}, data_identity="   ")
+    with pytest.raises(ValueError):
+        start_run(storage, hypothesis="h", phase="M0", resolved_config={}, data_not_applicable_reason="   ")
+
+
+def test_start_run_rejects_contradictory_data_declarations(tmp_path):
+    storage = _storage(tmp_path)
+    with pytest.raises(ValueError):
+        start_run(
+            storage, hypothesis="h", phase="M0", resolved_config={},
+            data_identity="sha256:abc", data_not_applicable_reason="no data used",
+        )
 
 
 def test_resolved_config_cannot_change_after_creation(tmp_path):
@@ -193,19 +216,37 @@ def test_handled_interruption_preserves_truthful_status(tmp_path):
     assert "SIGTERM" in reloaded.error
 
 
-def test_recover_crashed_runs_marks_stuck_running_as_crashed_not_success(tmp_path):
+def test_keyboard_interrupt_inside_run_context_is_recorded_as_interrupted_not_failed(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+
+    with pytest.raises(KeyboardInterrupt), run_context(storage, record):
+        raise KeyboardInterrupt
+
+    reloaded = storage.load_record(record.run_id)
+    assert reloaded.status == "interrupted"
+    assert reloaded.ended_at is not None
+
+
+def test_run_context_does_not_overwrite_an_already_finalized_record(tmp_path):
+    """A concurrent recovery sweep (or another finalizer) may finish first; the
+    context manager's own finalize must not clobber that outcome or raise."""
     storage = _storage(tmp_path)
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
     record.status = "running"
-    storage.write_record(record)  # simulate a process that died mid-run, never reaching run_context's cleanup
+    storage.write_record(record)
 
-    recovered_ids = storage.recover_crashed_runs(reason="test harness simulated crash")
+    with run_context(storage, record) as ctx_record:
+        # Simulate a concurrent finalizer (e.g. recovery) beating run_context to it.
+        already_crashed = storage.load_record(record.run_id)
+        already_crashed.status = "crashed"
+        already_crashed.ended_at = "2024-01-01T00:00:00+00:00"
+        already_crashed.error = "recovered: simulated concurrent finalize"
+        storage.write_record(already_crashed)
+        ctx_record.status = "running"  # run_context's own in-memory copy is unaware
 
-    assert record.run_id in recovered_ids
     reloaded = storage.load_record(record.run_id)
-    assert reloaded.status == "crashed"
-    assert reloaded.ended_at is not None
-    assert "recovered" in reloaded.error
+    assert reloaded.status == "crashed"  # the concurrent outcome stands; run_context did not overwrite it
 
 
 def test_recover_crashed_runs_does_not_touch_finalized_runs(tmp_path):
@@ -220,6 +261,93 @@ def test_recover_crashed_runs_does_not_touch_finalized_runs(tmp_path):
     assert storage.load_record(record.run_id).status == "success"
 
 
+def test_recover_crashed_runs_marks_a_run_with_no_live_owner_as_crashed(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    record.status = "running"
+    record.owner_pid = None  # unknown/legacy owner: cannot be verified alive
+    storage.write_record(record)
+
+    recovered_ids = storage.recover_crashed_runs(reason="test harness simulated crash")
+
+    assert record.run_id in recovered_ids
+    reloaded = storage.load_record(record.run_id)
+    assert reloaded.status == "crashed"
+    assert reloaded.ended_at is not None
+    assert "recovered" in reloaded.error
+
+
+def test_recovery_lock_rejects_a_concurrent_sweep(tmp_path):
+    storage = _storage(tmp_path)
+    lock_path = storage.root_dir / ".recovery.lock"
+    lock_path.touch()
+    try:
+        with pytest.raises(RecoveryInProgressError):
+            storage.recover_crashed_runs()
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def _mp_child_crash(root_dir: str, queue: multiprocessing.Queue) -> None:
+    storage = RunStorage(root_dir)
+    record = start_run(
+        storage, hypothesis="h", phase="M0", resolved_config={},
+        data_not_applicable_reason="multiprocessing recovery test",
+    )
+    record.status = "running"
+    record.owner_pid = __import__("os").getpid()
+    storage.write_record(record)
+    queue.put(record.run_id)
+    # Process exits here without ever finalizing -- simulates a crash.
+
+
+def _mp_child_stay_alive(root_dir: str, queue: multiprocessing.Queue, sleep_seconds: float) -> None:
+    storage = RunStorage(root_dir)
+    record = start_run(
+        storage, hypothesis="h", phase="M0", resolved_config={},
+        data_not_applicable_reason="multiprocessing recovery test",
+    )
+    record.status = "running"
+    record.owner_pid = __import__("os").getpid()
+    storage.write_record(record)
+    queue.put(record.run_id)
+    time.sleep(sleep_seconds)
+
+
+def test_recover_crashed_runs_marks_a_real_dead_child_process_as_crashed(tmp_path):
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=_mp_child_crash, args=(str(tmp_path / "runs"), queue))
+    proc.start()
+    run_id = queue.get(timeout=30)
+    proc.join(timeout=30)
+    assert not proc.is_alive()
+
+    storage = _storage(tmp_path)
+    recovered_ids = storage.recover_crashed_runs()
+
+    assert run_id in recovered_ids
+    assert storage.load_record(run_id).status == "crashed"
+
+
+def test_recover_crashed_runs_leaves_a_live_owned_run_running(tmp_path):
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=_mp_child_stay_alive, args=(str(tmp_path / "runs"), queue, 5.0))
+    proc.start()
+    try:
+        run_id = queue.get(timeout=30)
+
+        storage = _storage(tmp_path)
+        recovered_ids = storage.recover_crashed_runs()
+
+        assert run_id not in recovered_ids
+        assert storage.load_record(run_id).status == "running"
+    finally:
+        proc.terminate()
+        proc.join(timeout=10)
+
+
 # ---- Consistent persistence (M0-02 #3) --------------------------------------
 
 def test_injected_persistence_failure_leaves_record_in_last_good_state(tmp_path, monkeypatch):
@@ -229,25 +357,37 @@ def test_injected_persistence_failure_leaves_record_in_last_good_state(tmp_path,
     def _boom(*_args, **_kwargs):
         raise OSError("simulated disk failure")
 
-    monkeypatch.setattr(storage_module, "_atomic_write_json", _boom)
+    monkeypatch.setattr(storage, "_insert_transition", _boom)
     record.status = "running"
     with pytest.raises(OSError):
         storage.write_record(record)
 
     monkeypatch.undo()
     reloaded = storage.load_record(record.run_id)
-    assert reloaded.status == "pending"  # last durably-committed state, not corrupted or half-written
-    assert not list((storage.root_dir / record.run_id).glob("*.tmp"))
+    assert reloaded.status == "pending"  # the whole transaction rolled back, including the UPDATE
 
 
-def test_transition_log_records_every_status_change(tmp_path):
+def test_transition_log_records_every_status_change_with_payload_integrity(tmp_path):
     storage = _storage(tmp_path)
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
     with run_context(storage, record):
         pass
 
-    statuses = [entry["status"] for entry in storage.read_transitions(record.run_id)]
-    assert statuses == ["pending", "running", "success"]
+    transitions = storage.read_transitions(record.run_id)
+    assert [t["status"] for t in transitions] == ["pending", "running", "success"]
+    assert all(t["payload_sha256"] for t in transitions)
+
+
+def test_reopening_storage_yields_one_truthful_committed_state(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    with run_context(storage, record):
+        pass
+
+    reopened = RunStorage(tmp_path / "runs")
+    reloaded = reopened.load_record(record.run_id)
+    assert reloaded.status == "success"
+    assert reopened.read_transitions(record.run_id) == storage.read_transitions(record.run_id)
 
 
 # ---- Correct secret handling (M0-02 #4) -------------------------------------
@@ -271,12 +411,29 @@ def test_fake_secret_is_scrubbed_from_saved_error_text(tmp_path):
     assert "REDACTED" in reloaded.error
 
 
-# ---- Complete provenance (M0-02 #5) ------------------------------------------
+def test_scrubbing_is_safe_after_reload_even_though_in_memory_secrets_are_gone(tmp_path):
+    """Reloaded records never carry real secret values forward (they were already redacted
+    at save time), so scrubbing with an empty in-memory secret list is safe, not a leak."""
+    storage = _storage(tmp_path)
+    record = start_run(
+        storage, hypothesis="h", phase="M0", resolved_config={"api_key": "FAKE_SECRET_CANARY"}, **NO_DATA
+    )
+    with run_context(storage, record):
+        pass
+
+    reloaded = storage.load_record(record.run_id)
+    assert reloaded._secret_values == []
+    assert "FAKE_SECRET_CANARY" not in str(reloaded.resolved_config)
+
+
+# ---- Complete provenance (M0-02 #5 / H2 content provenance) -----------------
 
 def test_run_record_captures_code_and_dependency_provenance(tmp_path):
     storage = _storage(tmp_path)
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
     assert record.code_hash
+    assert record.code_manifest
+    assert record.code_revision
     assert record.dependency_lock_hash
 
 
@@ -295,27 +452,73 @@ def test_data_identity_is_recorded_when_provided(tmp_path):
     assert record.data_hash == "sha256:deadbeef"
 
 
-def test_compute_code_hash_returns_sentinel_outside_a_git_repo(tmp_path):
-    assert compute_code_hash(repo_root=tmp_path).startswith("unavailable:")
+def test_compute_source_fingerprint_differs_for_differently_dirty_trees(tmp_path):
+    repo_a = tmp_path / "repo_a"
+    repo_b = tmp_path / "repo_b"
+    for repo in (repo_a, repo_b):
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    (repo_b / "src" / "mod.py").write_text("x = 2\n", encoding="utf-8")
+
+    hash_a, manifest_a = compute_source_fingerprint(repo_root=repo_a)
+    hash_b, manifest_b = compute_source_fingerprint(repo_root=repo_b)
+    assert hash_a != hash_b
+    assert manifest_a == manifest_b == ["src/mod.py"]
+
+
+def test_compute_source_fingerprint_excludes_credential_shaped_files(tmp_path):
+    repo = tmp_path / "repo_c"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    _, manifest = compute_source_fingerprint(repo_root=repo)
+    assert ".env" not in manifest
+
+
+def test_compute_code_revision_returns_sentinel_outside_a_git_repo(tmp_path):
+    assert compute_code_revision(repo_root=tmp_path).startswith("unavailable:")
 
 
 def test_compute_dependency_lock_hash_returns_sentinel_without_lockfile(tmp_path):
     assert compute_dependency_lock_hash(repo_root=tmp_path) == "unavailable:no_lockfile"
 
 
-# ---- Safe storage paths (M0-02 #6) ------------------------------------------
+# ---- Recovery ownership (M0-02 #5 / H2) -------------------------------------
 
-@pytest.mark.parametrize("bad_run_id", ["../escape", "/etc/passwd", "a/../../b", ""])
-def test_traversal_run_ids_cannot_escape_storage_root(tmp_path, bad_run_id):
+def test_owner_pid_and_host_recorded_when_run_starts(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    assert record.owner_pid is None  # not yet running
+    with run_context(storage, record):
+        assert record.owner_pid is not None
+        assert record.owner_host is not None
+
+
+def test_owner_pid_cannot_be_reassigned_once_set(tmp_path):
+    storage = _storage(tmp_path)
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    record.status = "running"
+    record.owner_pid = 111
+    storage.write_record(record)
+
+    record.owner_pid = 222
+    with pytest.raises(FrozenFieldError):
+        storage.write_record(record)
+
+
+# ---- Safe storage paths (M0-02 #6 / H2: single-component run IDs) ----------
+
+@pytest.mark.parametrize("bad_run_id", ["../escape", "/etc/passwd", "a/../../b", "", "a/b", "a\\b"])
+def test_non_single_component_run_ids_are_rejected(tmp_path, bad_run_id):
     storage = _storage(tmp_path)
     with pytest.raises(InvalidRunIdError):
-        storage._run_dir(bad_run_id)
+        storage.load_record(bad_run_id)
 
 
-def test_valid_nested_run_id_stays_inside_root(tmp_path):
+def test_valid_single_component_run_id_is_accepted(tmp_path):
     storage = _storage(tmp_path)
-    run_dir = storage._run_dir("2024-01-01/abc123")
-    assert storage.root_dir.resolve() in run_dir.parents
+    record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
+    assert storage.load_record(record.run_id).run_id == record.run_id
 
 
 # ---- Validated execution boundary (M0-02 #7) --------------------------------
@@ -326,4 +529,5 @@ def test_write_record_requires_an_existing_run(tmp_path):
     phantom.run_id = "never-created"
     with pytest.raises(storage_module.RunNotFoundError):
         storage.write_record(phantom)
+
 
