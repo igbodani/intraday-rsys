@@ -25,8 +25,28 @@ Status: **Decided** = established direction; **Proposed** = specific candidate f
 | D19 | Research expense accounting | Open | Whether data/compute costs or later deposits reduce or augment the $1,000 account | Economic interpretation |
 | D20 | Data adjustment/session semantics | Proposed | Raw execution prices; as-of split conversion for historical features; calendar-aware RVOL lookback in `data_rules.md` | Data implementation and market baseline |
 | D21 | Ranking evidence storage | Proposed | Compact per-decision snapshots with deterministic reconstruction; measure storage and enable full snapshots only for declared diagnostic runs | Scanner/report implementation |
+| D22 | Trade-driven in-progress bars | Open | Requested capability (`IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md`): when input is individual trades, construct an evolving bar from only the trades available so far, using a versioned provider/feed-specific aggregation rule set; keep completed-bar replay and optional quote state as separate, non-additive inputs | Replay (R1–R3) design; exact feed, timestamp interpretation, delivery/correction history, condition-code rules, revision retention and quote access/entitlement remain unresolved |
 
-## Resolve in dependency order
+## Registered replay/data settings (proposed new fields, not populated; D22)
+
+Per `IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 9 -- declared as required interface points for R1–R3, not silently defaulted:
+
+| Setting | Purpose / rule |
+|---|---|
+| `replay.input_mode` | `completed_bars`, `historical_trades`, or `recorded_events` |
+| `replay.ordering_profile` | Explicit version: existing `bar_v1` phase profile or the new tested `trade_replay_v1` profile |
+| `replay.availability_model` | Recorded receipt or explicitly modeled delay; label the evidence class |
+| `bars.authority` | Provider snapshots or trade builder for a given series, never additive |
+| `bars.rule_set_id` / hash | Exact provider or synthetic fixture aggregation semantics, versioned |
+| `bars.interval` / session policy | Declared bucket boundaries; initially regular-session one-minute baseline |
+| `bars.revision_policy` | Versioned as-known updates; no retrospective decision mutation |
+| `bars.retention_policy` | Bounds and recovery behavior for correction lookup/state |
+| `strategy.observation_mode` | `closed_only` baseline; forming-bar access requires a separately specified variant |
+| `strategy.evaluation_cadence` | Closed-bar boundaries initially; intrabar cadence must be declared before its experiment |
+| `quotes.enabled` / freshness policy | Optional; enabling dependent behavior requires valid data and entitlement |
+| `execution.data_basis` | Distinguish conservative bar fills from subsequent-event trade estimates |
+
+
 
 1. Review the baseline bundle D04–D08, D14–D15 and D18. The exact definitions in this pack are ready for review.
 2. Confirm D09–D11 before market-account experiments. A fixture account does not answer these questions.

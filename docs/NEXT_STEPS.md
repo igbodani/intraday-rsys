@@ -2,6 +2,8 @@
 
 Updated: 2026-10-28. Applies to the reviewed `intraday-rsys.zip` snapshot. Recheck the checkout before implementing; do not assume a later branch still has the same defects.
 
+**Superseded (2026-10-28):** `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` now supersedes this file's next-task guidance (M0-01/M0-02 are built; that plan's H1/H2 close gaps an independent review found in them, and D1/R1-R3 replace the `M1-02` row below with typed market events, a trade-driven bar builder, and replay wiring). Use that document for current ordering; this file is retained for historical context on the original M0-01/M0-02 defects.
+
 ## Next task
 
 **Complete M0-01: configuration validation. Then complete M0-02: reliable run evidence.** The roadmap already exists in [tickets.md](tickets.md); this handoff adds the concrete findings needed to finish the current foundation. It does not replace the strategy or research specifications.

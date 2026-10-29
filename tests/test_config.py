@@ -110,26 +110,28 @@ def _fully_populated_synthetic_research_dict() -> dict[str, Any]:
         "minimum_observations": {
             "minimum_evaluation_days": 60,
             "minimum_evaluation_trades": 30,
-            "dependent_observation_treatment": "synthetic_test_block_bootstrap",
+            "dependent_observation_treatment": "synthetic_test_block_bootstrap:v1",
         },
-        "net_return": {"net_return_requirement": "0.05", "metric_definition": "synthetic_test_net_return"},
+        "net_return": {"net_return_requirement": "0.05", "metric_definition": "synthetic_test_net_return:v1"},
         "control_improvement": {
-            "control_id": "synthetic_test_control", "improvement_measure": "synthetic_test_paired_delta",
+            "control_id": "synthetic_test_control", "improvement_measure": "synthetic_test_paired_delta:v1",
         },
         "drawdown": {"drawdown_ceiling": "0.2"},
         "uncertainty": {
             "confidence_level": "0.95",
-            "resampling_design": "synthetic_test_block_bootstrap",
-            "acceptance_criterion": "synthetic_test_ci_excludes_zero",
+            "resampling_design": "synthetic_test_block_bootstrap:v1",
+            "acceptance_criterion": "synthetic_test_ci_excludes_zero:v1",
         },
         "cost_stress": {
-            "scenarios": ["synthetic_test_double_costs"], "acceptance_criteria": "synthetic_test_still_passes",
+            "scenarios": ["synthetic_test_double_costs"], "acceptance_criteria": "synthetic_test_still_passes:v1",
         },
-        "concentration": {"limits": "synthetic_test_max_30pct_one_symbol", "diagnostics": "synthetic_test_herfindahl"},
+        "concentration": {
+            "limits": "synthetic_test_max_30pct_one_symbol:v1", "diagnostics": "synthetic_test_herfindahl:v1",
+        },
         "paper_observation": {
             "forward_duration_days": 30,
-            "sample_requirement": "synthetic_test_min_20_trades",
-            "incident_handling": "synthetic_test_halt_and_review",
+            "sample_requirement": "synthetic_test_min_20_trades:v1",
+            "incident_handling": "synthetic_test_halt_and_review:v1",
         },
     }
     return data
@@ -375,13 +377,14 @@ def test_promotion_gates_partial_group_only_blocks_missing_leaves():
         "minimum_observations": {
             "minimum_evaluation_days": 60,
             "minimum_evaluation_trades": 30,
-            "dependent_observation_treatment": "synthetic_test_block_bootstrap",
+            "dependent_observation_treatment": "synthetic_test_block_bootstrap:v1",
         }
     }
     config = parse_config(data)
     result = validate_config(config)
     blocked = {b.field_path for b in result.blockers}
     assert "promotion_gates.minimum_observations.minimum_evaluation_days" not in blocked
+    assert "promotion_gates.minimum_observations.dependent_observation_treatment" not in blocked
     assert "promotion_gates.drawdown.drawdown_ceiling" in blocked
 
 
@@ -412,3 +415,157 @@ def test_fully_populated_synthetic_research_profile_has_no_blockers():
     result = validate_config(config)
     assert result.ok
     assert result.blockers == []
+
+
+# ---- H1 regression: implemented schema versions only -------------------------
+
+def test_unimplemented_schema_version_rejected():
+    data = _fixture_dict()
+    data["schema_version"] = 999
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_unimplemented_schema_version_rejected_for_research():
+    data = _research_dict()
+    data["schema_version"] = 999
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+# ---- H1 regression: booleans never satisfy a numeric field -------------------
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "risk.max_positions", "experiment.trial_budget", "experiment.seed",
+        "scanner.top_n", "scanner.lookback_sessions", "scanner.max_lookback_calendar_sessions",
+        "account.quantity_step", "account.minimum_quantity", "risk.fraction_per_trade",
+        "execution.spread_bps", "execution.feed_delay_ms", "capital_usd",
+    ],
+)
+def test_boolean_never_satisfies_a_numeric_field(path):
+    data = _research_dict()
+    _set_path(data, path, True)
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_boolean_never_satisfies_fixture_numeric_field():
+    data = _fixture_dict()
+    data["feed_delay_ms"] = False
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_boolean_does_not_satisfy_promotion_gate_numeric_leaf():
+    data = _research_dict()
+    data["promotion_gates"] = {"minimum_observations": {"minimum_evaluation_days": True}}
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_zero_is_still_a_legal_seed_and_zero_cost():
+    data = _fully_populated_synthetic_research_dict()
+    _set_path(data, "experiment.seed", 0)
+    _set_path(data, "execution.feed_delay_ms", 0)
+    config = parse_config(data)
+    result = validate_config(config)
+    assert result.ok
+
+
+# ---- H1 regression: offset-free local cutoff time ----------------------------
+
+@pytest.mark.parametrize("bad_cutoff", ["11:00+05:00", "11:00Z", "11am", "9:30", "11:00:00"])
+def test_offset_bearing_or_malformed_entry_cutoff_rejected(bad_cutoff):
+    data = _research_dict()
+    _set_path(data, "strategy.entry_cutoff_local", bad_cutoff)
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_well_formed_entry_cutoff_accepted():
+    data = _research_dict()
+    _set_path(data, "strategy.entry_cutoff_local", "11:00")
+    parse_config(data)  # must not raise
+
+
+# ---- H1 regression: partial-pair date-ordering enforcement -------------------
+
+def test_partial_reversed_development_interval_rejected_even_with_other_dates_missing():
+    data = _research_dict()
+    data["experiment"]["development_start"] = "2024-06-01"
+    data["experiment"]["development_end"] = "2024-01-01"  # reversed; validation/final still missing
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_partial_adjacent_pair_overlap_rejected_even_with_other_dates_missing():
+    data = _research_dict()
+    data["experiment"]["development_end"] = "2024-06-01"
+    data["experiment"]["validation_start"] = "2024-06-01"  # touching, not strictly after
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+# ---- H1 regression: blank required identifiers / blank list elements --------
+
+def test_blank_required_identifier_is_blocked_not_silently_resolved():
+    data = _research_dict()
+    _set_path(data, "feed", "   ")
+    config = parse_config(data)
+    result = validate_config(config)
+    assert any(b.field_path == "feed" for b in result.blockers)
+
+
+def test_blank_list_element_in_cost_stress_scenarios_is_blocked():
+    data = _research_dict()
+    data["promotion_gates"] = {"cost_stress": {"scenarios": ["double_costs", "   "]}}
+    config = parse_config(data)
+    result = validate_config(config)
+    assert any(b.field_path == "promotion_gates.cost_stress.scenarios" for b in result.blockers)
+
+
+# ---- H1 regression: gate method references must be declared and versioned ---
+
+def test_placeholder_method_string_is_insufficient_for_a_gate_method_field():
+    data = _research_dict()
+    data["promotion_gates"] = {"uncertainty": {"resampling_design": "defined"}}
+    config = parse_config(data)
+    result = validate_config(config)
+    assert any(b.field_path == "promotion_gates.uncertainty.resampling_design" for b in result.blockers)
+
+
+def test_versioned_method_reference_is_accepted_for_a_gate_method_field():
+    data = _fully_populated_synthetic_research_dict()
+    config = parse_config(data)
+    result = validate_config(config)
+    assert "promotion_gates.uncertainty.resampling_design" not in {b.field_path for b in result.blockers}
+
+
+# ---- H1 regression: controlled decoding failures and safe error messages ----
+
+def test_invalid_utf8_file_is_a_controlled_failure(tmp_path):
+    bad = tmp_path / "invalid_utf8.yaml"
+    bad.write_bytes(b"mode: fixture\n\xff\xfe\x00bad_bytes")
+    with pytest.raises(ConfigError):
+        load_raw(bad)
+
+
+def test_custom_validator_error_does_not_leak_the_submitted_value():
+    data = _fixture_dict()
+    data["initial_cash_default"] = "FAKE_SECRET_CANARY"
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config(data)
+    assert "FAKE_SECRET_CANARY" not in str(exc_info.value)
+
+
+def test_registry_blocker_reason_does_not_leak_the_resolved_value():
+    data = _research_dict()
+    _set_path(data, "risk.fraction_per_trade", "FAKE_SECRET_CANARY_NOT_A_NUMBER")
+    with pytest.raises(ConfigError) as exc_info:
+        parse_config(data)
+    # Decimal parsing itself rejects a non-numeric string before the registry ever sees it;
+    # the pydantic type error must still not echo the raw value.
+    assert "FAKE_SECRET_CANARY_NOT_A_NUMBER" not in str(exc_info.value)
+

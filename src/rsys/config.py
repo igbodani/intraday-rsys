@@ -12,7 +12,8 @@ fixture's zero-cost test simplifications.
 """
 from __future__ import annotations
 
-from datetime import date, time
+import re
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -20,6 +21,7 @@ from typing import Annotated, Any, Literal
 import yaml
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     ValidationError,
@@ -28,6 +30,29 @@ from pydantic import (
 )
 
 from rsys.registry import REGISTRY, _nonnegative, _positive_int, _positive_number
+
+# Implemented schema versions only; a parsed, in-range integer is not proof a newer/older
+# schema is actually supported by this codebase.
+_IMPLEMENTED_SCHEMA_VERSIONS = frozenset({1})
+
+# `bool` is an `int` subclass, so pydantic's default (lax) coercion silently turns a
+# boolean into 0/1 for any int/Decimal field. Reject it *before* that coercion happens,
+# so counts, budgets, seeds, delays and money fields can't be satisfied by `true`/`false`.
+
+
+def _reject_bool(v: Any) -> Any:
+    if isinstance(v, bool):
+        raise ValueError("boolean values are not accepted for this numeric field")  # noqa: TRY004 (pydantic only converts ValueError/AssertionError)
+    return v
+
+
+NonBoolInt = Annotated[int, BeforeValidator(_reject_bool)]
+OptionalNonBoolInt = Annotated[int | None, BeforeValidator(_reject_bool)]
+NonBoolDecimal = Annotated[Decimal, BeforeValidator(_reject_bool)]
+OptionalNonBoolDecimal = Annotated[Decimal | None, BeforeValidator(_reject_bool)]
+
+# Offset-free HH:MM, 24-hour, exchange-local time (strategy.entry_cutoff_local).
+_LOCAL_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class ConfigError(Exception):
@@ -57,44 +82,44 @@ class FixtureConfig(BaseModel):
     evidence_type: Literal["synthetic_only"]
     network_allowed: Literal[False]
     input: str
-    initial_cash_default: Decimal
-    quantity_step: Decimal
-    price_tick: Decimal
+    initial_cash_default: NonBoolDecimal
+    quantity_step: NonBoolDecimal
+    price_tick: NonBoolDecimal
     cash_model: str
-    spread: Decimal
-    slippage: Decimal
-    fees: Decimal
-    feed_delay_ms: int
-    decision_latency_ms: int
+    spread: NonBoolDecimal
+    slippage: NonBoolDecimal
+    fees: NonBoolDecimal
+    feed_delay_ms: NonBoolInt
+    decision_latency_ms: NonBoolInt
     overrides: str
     warning: str
 
     @field_validator("schema_version", mode="before")
     @classmethod
     def _check_schema_version(cls, v: Any) -> Any:
-        if not _positive_int(v):
-            raise ValueError(f"schema_version must be a positive integer, got {v!r}")
+        if isinstance(v, bool) or v not in _IMPLEMENTED_SCHEMA_VERSIONS:
+            raise ValueError("schema_version must be one of the implemented schema versions")
         return v
 
     @field_validator("initial_cash_default", "quantity_step", "price_tick")
     @classmethod
     def _check_positive(cls, v: Decimal) -> Decimal:
         if not _positive_number(v):
-            raise ValueError(f"must be a finite positive value, got {v!r}")
+            raise ValueError("must be a finite positive value")
         return v
 
     @field_validator("spread", "slippage", "fees")
     @classmethod
     def _check_nonnegative_cost(cls, v: Decimal) -> Decimal:
         if not _nonnegative(v):
-            raise ValueError(f"must be a finite nonnegative value, got {v!r}")
+            raise ValueError("must be a finite nonnegative value")
         return v
 
     @field_validator("feed_delay_ms", "decision_latency_ms")
     @classmethod
     def _check_nonnegative_delay(cls, v: int) -> int:
-        if isinstance(v, bool) or v < 0:
-            raise ValueError(f"must be a nonnegative integer, got {v!r}")
+        if v < 0:
+            raise ValueError("must be a nonnegative integer")
         return v
 
 
@@ -103,27 +128,27 @@ class FixtureConfig(BaseModel):
 class AccountConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     profile: str | None = None
-    quantity_step: Decimal | None = None
-    minimum_quantity: Decimal | None = None
+    quantity_step: OptionalNonBoolDecimal = None
+    minimum_quantity: OptionalNonBoolDecimal = None
     proceeds_availability: str | None = None
 
 
 class RiskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    fraction_per_trade: Decimal | None = None
-    daily_loss_limit_usd: Decimal | None = None
-    drawdown_limit_fraction: Decimal | None = None
-    max_positions: int | None = None
-    max_position_notional_usd: Decimal | None = None
+    fraction_per_trade: OptionalNonBoolDecimal = None
+    daily_loss_limit_usd: OptionalNonBoolDecimal = None
+    drawdown_limit_fraction: OptionalNonBoolDecimal = None
+    max_positions: OptionalNonBoolInt = None
+    max_position_notional_usd: OptionalNonBoolDecimal = None
 
 
 class ExecutionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    spread_bps: Decimal | None = None
-    slippage_bps: Decimal | None = None
+    spread_bps: OptionalNonBoolDecimal = None
+    slippage_bps: OptionalNonBoolDecimal = None
     fee_profile: str | None = None
-    feed_delay_ms: int | None = None
-    decision_latency_ms: int | None = None
+    feed_delay_ms: OptionalNonBoolInt = None
+    decision_latency_ms: OptionalNonBoolInt = None
     # Decided behavior (contracts.md "Position and exit behavior"): ambiguous bars use stop-first.
     ambiguous_exit: Literal["stop_first"]
 
@@ -132,18 +157,15 @@ class ScannerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Only scanner implemented in v1 (D14); a parsed ID is not proof another scanner exists.
     id: Literal["rvol_then_gain_v1"]
-    top_n: int
-    lookback_sessions: int
-    min_prior_dollar_volume: Decimal | None = None
-    max_lookback_calendar_sessions: int
+    top_n: NonBoolInt
+    lookback_sessions: NonBoolInt
+    min_prior_dollar_volume: OptionalNonBoolDecimal = None
+    max_lookback_calendar_sessions: NonBoolInt
 
     @model_validator(mode="after")
     def _check_lookback_cap(self) -> ScannerConfig:
         if self.max_lookback_calendar_sessions < self.lookback_sessions:
-            raise ValueError(
-                "max_lookback_calendar_sessions must be >= lookback_sessions "
-                f"({self.max_lookback_calendar_sessions} < {self.lookback_sessions})"
-            )
+            raise ValueError("max_lookback_calendar_sessions must be >= lookback_sessions")
         return self
 
 
@@ -151,27 +173,25 @@ class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Only strategy implemented in v1 (D15); VWAP remains unimplemented/unspecified.
     id: Literal["orb_close_cross_v1"]
-    range_minutes: int
-    breakout_buffer_ticks: int
+    range_minutes: NonBoolInt
+    breakout_buffer_ticks: NonBoolInt
     entry_cutoff_local: str
-    max_fills_per_symbol_day: int
+    max_fills_per_symbol_day: NonBoolInt
 
     @field_validator("entry_cutoff_local")
     @classmethod
     def _check_entry_cutoff_format(cls, v: str) -> str:
-        try:
-            time.fromisoformat(v)
-        except ValueError as exc:
-            raise ValueError(f"entry_cutoff_local must be an HH:MM exchange-local time, got {v!r}") from exc
+        if not _LOCAL_TIME_RE.fullmatch(v):
+            raise ValueError("entry_cutoff_local must be an offset-free HH:MM exchange-local time")
         # Ordering against the actual session close/flatten timer needs calendar input; deferred to M1.
         return v
 
 
 class ExitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    target_r: Decimal
-    maximum_hold_minutes: int
-    flatten_buffer_minutes: int
+    target_r: NonBoolDecimal
+    maximum_hold_minutes: NonBoolInt
+    flatten_buffer_minutes: NonBoolInt
 
 
 class ExperimentConfig(BaseModel):
@@ -182,8 +202,8 @@ class ExperimentConfig(BaseModel):
     validation_end: str | None = None
     final_start: str | None = None
     final_end: str | None = None
-    trial_budget: int | None = None
-    seed: int | None = None
+    trial_budget: OptionalNonBoolInt = None
+    seed: OptionalNonBoolInt = None
 
     @field_validator(
         "development_start", "development_end", "validation_start", "validation_end", "final_start", "final_end",
@@ -195,25 +215,31 @@ class ExperimentConfig(BaseModel):
         try:
             date.fromisoformat(v)
         except ValueError as exc:
-            raise ValueError(f"must be an ISO 8601 date (YYYY-MM-DD), got {v!r}") from exc
+            raise ValueError("must be an ISO 8601 date (YYYY-MM-DD)") from exc
         return v
 
     @model_validator(mode="after")
     def _check_interval_ordering(self) -> ExperimentConfig:
-        fields = (
-            self.development_start, self.development_end,
-            self.validation_start, self.validation_end,
-            self.final_start, self.final_end,
+        """Enforce every chronological relationship whose two endpoints are both known,
+        even while an unrelated endpoint elsewhere is still an unresolved blocker."""
+        adjacent_pairs = (
+            (self.development_start, self.development_end, False),
+            (self.development_end, self.validation_start, True),
+            (self.validation_start, self.validation_end, False),
+            (self.validation_end, self.final_start, True),
+            (self.final_start, self.final_end, False),
         )
-        if any(f is None for f in fields):
-            return self  # a missing endpoint stays a named registry blocker, not a format error
-        dev_start, dev_end, val_start, val_end, fin_start, fin_end = (date.fromisoformat(f) for f in fields)  # type: ignore[arg-type]
-        if not (dev_start <= dev_end < val_start <= val_end < fin_start <= fin_end):
-            raise ValueError(
-                "experiment intervals must be chronological and non-overlapping: "
-                "development_start <= development_end < validation_start <= validation_end "
-                "< final_start <= final_end"
-            )
+        for left, right, strict in adjacent_pairs:
+            if left is None or right is None:
+                continue
+            left_date, right_date = date.fromisoformat(left), date.fromisoformat(right)
+            in_order = left_date < right_date if strict else left_date <= right_date
+            if not in_order:
+                raise ValueError(
+                    "experiment date endpoints must be chronological and non-overlapping: "
+                    "development_start <= development_end < validation_start <= validation_end "
+                    "< final_start <= final_end"
+                )
         return self
 
 
@@ -237,14 +263,14 @@ class ReportingConfig(BaseModel):
 
 class MinimumObservationsGate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    minimum_evaluation_days: int | None = None
-    minimum_evaluation_trades: int | None = None
+    minimum_evaluation_days: OptionalNonBoolInt = None
+    minimum_evaluation_trades: OptionalNonBoolInt = None
     dependent_observation_treatment: str | None = None
 
 
 class NetReturnGate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    net_return_requirement: Decimal | None = None
+    net_return_requirement: OptionalNonBoolDecimal = None
     metric_definition: str | None = None
 
 
@@ -256,20 +282,20 @@ class ControlImprovementGate(BaseModel):
 
 class DrawdownGate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    drawdown_ceiling: Decimal | None = None
-    recovery_duration_limit_days: int | None = None  # optional per experiments.md; never blocks alone
+    drawdown_ceiling: OptionalNonBoolDecimal = None
+    recovery_duration_limit_days: OptionalNonBoolInt = None  # optional; never blocks alone
 
     @field_validator("recovery_duration_limit_days")
     @classmethod
     def _check_recovery_duration(cls, v: int | None) -> int | None:
         if v is not None and not _positive_int(v):
-            raise ValueError(f"recovery_duration_limit_days must be a positive integer, got {v!r}")
+            raise ValueError("recovery_duration_limit_days must be a positive integer")
         return v
 
 
 class UncertaintyGate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    confidence_level: Decimal | None = None
+    confidence_level: OptionalNonBoolDecimal = None
     resampling_design: str | None = None
     acceptance_criterion: str | None = None
 
@@ -288,7 +314,7 @@ class ConcentrationGate(BaseModel):
 
 class PaperObservationGate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    forward_duration_days: int | None = None
+    forward_duration_days: OptionalNonBoolInt = None
     sample_requirement: str | None = None
     incident_handling: str | None = None
 
@@ -313,12 +339,12 @@ class ResearchConfig(BaseModel):
     mode: Literal["research"]
     hypothesis: str
     decision_refs: list[str]
-    capital_usd: Decimal
+    capital_usd: NonBoolDecimal
     # Decided markets/provider (D02): stocks/ETFs via Alpaca only in v1.
     provider: Literal["alpaca"]
     feed: str | None = None
     data_manifest: str | None = None
-    base_interval_minutes: int
+    base_interval_minutes: NonBoolInt
     # Supported v1 behavior (D06/D07): regular-session data and trading only; premarket is a later ticket.
     data_session: Literal["regular"]
     trading_session: Literal["regular"]
@@ -340,15 +366,15 @@ class ResearchConfig(BaseModel):
     @field_validator("schema_version", mode="before")
     @classmethod
     def _check_schema_version(cls, v: Any) -> Any:
-        if not _positive_int(v):
-            raise ValueError(f"schema_version must be a positive integer, got {v!r}")
+        if isinstance(v, bool) or v not in _IMPLEMENTED_SCHEMA_VERSIONS:
+            raise ValueError("schema_version must be one of the implemented schema versions")
         return v
 
     @field_validator("capital_usd")
     @classmethod
     def _check_capital_positive(cls, v: Decimal) -> Decimal:
         if not _positive_number(v):
-            raise ValueError(f"capital_usd must be a finite positive value, got {v!r}")
+            raise ValueError("capital_usd must be a finite positive value")
         return v
 
 
@@ -362,6 +388,8 @@ def load_raw(path: str | Path) -> dict[str, Any]:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(f"{path}: cannot read config file ({exc})") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{path}: file is not valid UTF-8") from exc
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:

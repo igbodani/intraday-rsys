@@ -8,6 +8,7 @@ with those two files if they change.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -29,11 +30,14 @@ class ParameterSpec:
         return self.status == "open" and value is None
 
     def validate(self, value: Any) -> str | None:
-        """Return an error message if value violates the declared range/constraint, else None."""
+        """Return an error message if value violates the declared range/constraint, else None.
+        Never echoes the raw value itself: a resolved-but-invalid field may still hold something
+        secret-like, and the message is surfaced directly to CLI stderr/blocker output.
+        """
         if value is None:
             return None
         if self.validator is not None and not self.validator(value):
-            return f"{self.field_path}: value {value!r} outside valid range/constraint ({self.units})"
+            return f"{self.field_path}: value outside valid range/constraint ({self.units})"
         return None
 
 
@@ -74,6 +78,21 @@ def _fraction_0_1(v: Any) -> bool:
 def _non_empty_str(v: Any) -> bool:
     """Shared with config.py: a required identifier is present and not blank."""
     return isinstance(v, str) and v.strip() != ""
+
+
+def _non_empty_str_list(v: Any) -> bool:
+    """A nonempty list whose elements are themselves nonblank strings (no blank list elements)."""
+    return isinstance(v, list) and len(v) > 0 and all(_non_empty_str(item) for item in v)
+
+
+_METHOD_REFERENCE_RE = re.compile(r"^[a-z][a-z0-9_]*:v[0-9]+$")
+
+
+def _is_method_reference(v: Any) -> bool:
+    """A gate 'method' field must cite a declared, versioned spec (e.g. 'block_bootstrap:v1'),
+    not an arbitrary placeholder string like 'defined' -- that would silently invent a method.
+    """
+    return isinstance(v, str) and _METHOD_REFERENCE_RE.fullmatch(v) is not None
 
 
 # Field paths use dotted notation relative to the research config root.
@@ -234,7 +253,7 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "promotion_gates.minimum_observations.dependent_observation_treatment": ParameterSpec(
         "promotion_gates.minimum_observations.dependent_observation_treatment", "method ref", "open", "D17",
-        "Requires a declared treatment for dependent observations", _non_empty_str,
+        "Requires a declared, versioned treatment for dependent observations", _is_method_reference,
     ),
     "promotion_gates.net_return.net_return_requirement": ParameterSpec(
         "promotion_gates.net_return.net_return_requirement", "fraction or USD", "open", "D17",
@@ -242,7 +261,7 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "promotion_gates.net_return.metric_definition": ParameterSpec(
         "promotion_gates.net_return.metric_definition", "method ref", "open", "D17",
-        "Requires a declared net-return metric definition", _non_empty_str,
+        "Requires a declared, versioned net-return metric definition", _is_method_reference,
     ),
     "promotion_gates.control_improvement.control_id": ParameterSpec(
         "promotion_gates.control_improvement.control_id", "control id", "open", "D17",
@@ -250,7 +269,7 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "promotion_gates.control_improvement.improvement_measure": ParameterSpec(
         "promotion_gates.control_improvement.improvement_measure", "method ref", "open", "D17",
-        "Requires a declared paired-improvement measure", _non_empty_str,
+        "Requires a declared, versioned paired-improvement measure", _is_method_reference,
     ),
     "promotion_gates.drawdown.drawdown_ceiling": ParameterSpec(
         "promotion_gates.drawdown.drawdown_ceiling", "fraction of equity", "open", "D17",
@@ -262,28 +281,27 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "promotion_gates.uncertainty.resampling_design": ParameterSpec(
         "promotion_gates.uncertainty.resampling_design", "method ref", "open", "D17",
-        "Requires a declared daily/block resampling design", _non_empty_str,
+        "Requires a declared, versioned daily/block resampling design", _is_method_reference,
     ),
     "promotion_gates.uncertainty.acceptance_criterion": ParameterSpec(
         "promotion_gates.uncertainty.acceptance_criterion", "method ref", "open", "D17",
-        "Requires a declared uncertainty acceptance criterion", _non_empty_str,
+        "Requires a declared, versioned uncertainty acceptance criterion", _is_method_reference,
     ),
     "promotion_gates.cost_stress.scenarios": ParameterSpec(
         "promotion_gates.cost_stress.scenarios", "scenario list", "open", "D17",
-        "Requires at least one declared cost/delay stress scenario",
-        lambda v: isinstance(v, list) and len(v) > 0,
+        "Requires at least one declared, nonblank cost/delay stress scenario", _non_empty_str_list,
     ),
     "promotion_gates.cost_stress.acceptance_criteria": ParameterSpec(
         "promotion_gates.cost_stress.acceptance_criteria", "method ref", "open", "D17",
-        "Requires declared cost-stress acceptance criteria", _non_empty_str,
+        "Requires declared, versioned cost-stress acceptance criteria", _is_method_reference,
     ),
     "promotion_gates.concentration.limits": ParameterSpec(
         "promotion_gates.concentration.limits", "method ref", "open", "D17",
-        "Requires declared symbol/period/winner concentration limits", _non_empty_str,
+        "Requires declared, versioned symbol/period/winner concentration limits", _is_method_reference,
     ),
     "promotion_gates.concentration.diagnostics": ParameterSpec(
         "promotion_gates.concentration.diagnostics", "method ref", "open", "D17",
-        "Requires declared concentration diagnostics", _non_empty_str,
+        "Requires declared, versioned concentration diagnostics", _is_method_reference,
     ),
     "promotion_gates.paper_observation.forward_duration_days": ParameterSpec(
         "promotion_gates.paper_observation.forward_duration_days", "days", "open", "D17",
@@ -291,11 +309,11 @@ REGISTRY: dict[str, ParameterSpec] = {
     ),
     "promotion_gates.paper_observation.sample_requirement": ParameterSpec(
         "promotion_gates.paper_observation.sample_requirement", "method ref", "open", "D17",
-        "Requires a declared paper-observation sample requirement", _non_empty_str,
+        "Requires a declared, versioned paper-observation sample requirement", _is_method_reference,
     ),
     "promotion_gates.paper_observation.incident_handling": ParameterSpec(
         "promotion_gates.paper_observation.incident_handling", "method ref", "open", "D17",
-        "Requires declared paper-observation incident handling", _non_empty_str,
+        "Requires declared, versioned paper-observation incident handling", _is_method_reference,
     ),
     "data_adjustment.symbol_mapping_asof": ParameterSpec(
         "data_adjustment.symbol_mapping_asof", "asof ref", "open", "D13", "Requires audited historical universe mapping",
