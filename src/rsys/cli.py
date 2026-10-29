@@ -16,6 +16,8 @@ from rsys.replay_io import (
 EXIT_SUCCESS = 0
 EXIT_OTHER_FAILURE = 1
 EXIT_INVALID_CONFIG = 2
+EXIT_DATA_ERROR = 3
+EXIT_INVARIANT_FAILURE = 4
 
 _NOT_IMPLEMENTED = ("fixture", "run", "compare", "final-evaluate")
 
@@ -64,14 +66,22 @@ def _cmd_replay(args: argparse.Namespace) -> int:
         result = run_replay_from_config(config, out_dir)
     except (ReplayInputError, UnsupportedRuleSetError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except (ValueError, RuntimeError) as exc:
+        print(f"error: replay failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
+        return EXIT_INVARIANT_FAILURE
+    except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
+        print(f"error: replay failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
         return EXIT_OTHER_FAILURE
 
     if not result.complete:
         print(f"incomplete: {result.incomplete_reason}", file=sys.stderr)
+        print(f"run_id: {result.run_id}", file=sys.stderr)
         print(f"trace: {result.trace_path}", file=sys.stderr)
-        return EXIT_OTHER_FAILURE
+        return EXIT_DATA_ERROR
 
     print(f"ok: {result.event_count} event(s) replayed")
+    print(f"run_id: {result.run_id}")
     print(f"trace: {result.trace_path}")
     print(f"manifest: {result.manifest_path}")
     print(f"semantic_trace_hash: {result.semantic_hash}")

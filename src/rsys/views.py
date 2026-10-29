@@ -1,100 +1,254 @@
-"""Bounded as-of views over a replayed event stream (R1).
+"""Frozen event/publication collections with explicit availability cutoffs."""
 
-Snapshot views are immutable: every query is bounded by a cutoff and returns a
-fresh list, never a reference into live state. The default baseline strategy
-context exposes only completed bars; an opted-in intrabar variant additionally
-exposes the current forming bar, latest trade and latest quote -- the baseline
-never silently gains forming-bar access, and an intrabar variant never silently
-loses the closed-bar view.
-"""
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from rsys.data.bar_builder import BarSnapshot
-from rsys.data.events import MarketEvent, ProviderBarEvent, QuoteEvent, TradeEvent
+from rsys.data.bars import INTERVAL_DURATIONS_NS
+from rsys.data.events import (
+    CorporateActionEvent,
+    MarketEvent,
+    ProviderBarEvent,
+    QualityState,
+    QuoteEvent,
+    TradeEvent,
+)
+from rsys.data.keys import ReplayKey, cutoff_key
+from rsys.data.quotes import (
+    QuoteCondition,
+    QuoteFreshnessPolicy,
+    classify_quote_condition,
+)
+from rsys.replay import ReplayProfile, event_key
 
 if TYPE_CHECKING:
     from rsys.replay_runtime import SeriesRouter
 
 
+@dataclass(frozen=True)
+class QuoteObservation:
+    event: QuoteEvent | None
+    state: str  # usable, disabled, unavailable, invalid, stale, crossed, locked, missing side
+
+
 class ReplayView:
-    """Read-only access to a fixed, already-ordered event collection, bounded by availability.
+    """Copy immutable references at construction; never retain a mutable router/builder.
 
-    `events` MUST already be in full replay dispatch order (e.g. the output of
-    `rsys.replay.replay_order`/`ReplayStream`) -- `latest_trade`/`latest_quote` rely on that
-    order to break availability ties correctly (C07): among several events sharing the same
-    `available_at_ns`, the one actually dispatched LAST (by phase/sequence/stable tiebreak) is
-    the true "latest", not merely the first one encountered.
-
-    `router`, if given, must already reflect exactly the events processed so far (R3-B) -- this
-    view never processes events itself and never peeks at anything beyond what the router was
-    told to apply.
+    Timestamp cutoffs mean the end of that timestamp. ReplayKey additionally bounds
+    phases and sequence. Production contexts use the runner's completed batch at phase 40.
     """
 
-    def __init__(self, events: Sequence[MarketEvent], *, router: SeriesRouter | None = None):
+    def __init__(
+        self,
+        events: Sequence[MarketEvent],
+        *,
+        router: SeriesRouter | None = None,
+        authority: str = "provider_publication",
+        quotes_enabled: bool = True,
+        profile: ReplayProfile = ReplayProfile.TRADE_REPLAY_V1,
+        quote_freshness_policy: QuoteFreshnessPolicy | None = None,
+    ):
+        if authority not in ("provider_publication", "trade_builder"):
+            raise ValueError("unsupported bars authority")
         self._events = tuple(events)
-        self._router = router
+        self._profile = profile
+        self._authority = authority
+        self._quotes_enabled = quotes_enabled
+        self._wired = router is not None
+        self._versions = router.frozen_versions() if router else ()
+        self._interval = router.interval if router else None
+        self._quote_policy = quote_freshness_policy or (
+            router.quote_policy if router else None
+        )
 
-    def closed_bars(self, instrument_id: str, as_of_ns: int) -> list[ProviderBarEvent]:
-        """Only a bar's first/closing publication, available at or before `as_of_ns`.
-        Post-closure revisions (R2) are a separate, later concern -- never silently substituted here.
-        """
-        return [
-            e for e in self._events
-            if isinstance(e, ProviderBarEvent) and e.instrument_id == instrument_id
-            and e.bar_revision == 1 and e.available_at_ns <= as_of_ns
+    def _visible(self, event, cutoff):
+        return event_key(event, self._profile) <= cutoff_key(cutoff)
+
+    def _selected_versions(self, instrument_id, cutoff):
+        selected = {}
+        for version in self._versions:
+            if (
+                version.instrument_id != instrument_id
+                or version.publication_key > cutoff_key(cutoff)
+            ):
+                continue
+            identity = (
+                version.instrument_id,
+                version.feed,
+                version.interval,
+                version.bar_start_ns,
+            )
+            current = selected.get(identity)
+            if current is None or version.publication_key > current.publication_key:
+                selected[identity] = version
+        return selected.values()
+
+    def closed_bars(self, instrument_id: str, as_of_ns: int | ReplayKey) -> list:
+        if self._authority == "trade_builder":
+            if not self._wired:
+                raise NotImplementedError(
+                    "trade_builder authority requires a wired SeriesRouter"
+                )
+            return sorted(
+                (
+                    v
+                    for v in self._selected_versions(instrument_id, as_of_ns)
+                    if v.status in ("closed_as_of", "revised")
+                ),
+                key=lambda v: v.bar_start_ns,
+            )
+        selected = {}
+        for event in self._events:
+            if (
+                isinstance(event, ProviderBarEvent)
+                and event.instrument_id == instrument_id
+                and self._visible(event, as_of_ns)
+            ):
+                identity = (
+                    event.provider,
+                    event.feed,
+                    event.interval,
+                    event.bar_start_ns,
+                    event.bar_end_ns,
+                )
+                current = selected.get(identity)
+                if current is None or (
+                    event.bar_revision,
+                    event_key(event, self._profile),
+                ) >= (current.bar_revision, event_key(current, self._profile)):
+                    selected[identity] = event
+        actions = [
+            e
+            for e in self._events
+            if isinstance(e, CorporateActionEvent)
+            and e.instrument_id == instrument_id
+            and self._visible(e, as_of_ns)
         ]
+        return sorted(
+            (
+                e
+                for e in selected.values()
+                if e.quality_state == QualityState.OK
+                and not any(
+                    e.bar_start_ns < a.effective_at_ns < e.bar_end_ns for a in actions
+                )
+            ),
+            key=lambda e: (e.bar_start_ns, e.provider, e.feed, e.interval),
+        )
 
-    def latest_trade(self, instrument_id: str, as_of_ns: int) -> TradeEvent | None:
-        """The event actually dispatched LAST among those available at or before `as_of_ns`
-        (C07): ties at the same `available_at_ns` are broken by declared dispatch order, not by
-        whichever candidate is encountered first."""
+    def latest_trade(
+        self, instrument_id: str, as_of_ns: int | ReplayKey
+    ) -> TradeEvent | None:
         candidates = [
-            e for e in self._events
-            if isinstance(e, TradeEvent) and e.instrument_id == instrument_id and e.available_at_ns <= as_of_ns
+            e
+            for e in self._events
+            if isinstance(e, TradeEvent)
+            and e.instrument_id == instrument_id
+            and self._visible(e, as_of_ns)
+            and e.quality_state == QualityState.OK
         ]
         return candidates[-1] if candidates else None
 
-    def latest_quote(self, instrument_id: str, as_of_ns: int) -> QuoteEvent | None:
-        """See `latest_trade`'s docstring: the last-dispatched eligible event, not a timestamp-
-        only `max()` which returns the first tie encountered."""
+    def quote_observation(
+        self, instrument_id: str, as_of_ns: int | ReplayKey
+    ) -> QuoteObservation:
+        if not self._quotes_enabled:
+            return QuoteObservation(None, "disabled")
         candidates = [
-            e for e in self._events
-            if isinstance(e, QuoteEvent) and e.instrument_id == instrument_id and e.available_at_ns <= as_of_ns
+            e
+            for e in self._events
+            if isinstance(e, QuoteEvent)
+            and e.instrument_id == instrument_id
+            and self._visible(e, as_of_ns)
         ]
-        return candidates[-1] if candidates else None
+        if not candidates:
+            return QuoteObservation(None, "unavailable")
+        event = candidates[-1]
+        if event.quality_state != QualityState.OK:
+            return QuoteObservation(event, "invalid")
+        if self._quote_policy is not None:
+            age = cutoff_key(as_of_ns).available_at_ns - event.available_at_ns
+            if age > self._quote_policy.freshness_limit_ms * 1_000_000:
+                return QuoteObservation(event, "stale")
+        condition = classify_quote_condition(event.bid_price, event.ask_price)
+        if condition != QuoteCondition.NORMAL:
+            return QuoteObservation(event, condition.value)
+        return QuoteObservation(event, "usable")
 
-    def forming_bar(self, instrument_id: str, as_of_ns: int) -> BarSnapshot | None:
-        """The current forming bar for `instrument_id` at `as_of_ns`, or `None` if that
-        interval has already closed or has no contributors yet (R3-B). Explicit, not silent,
-        when no router was wired: a `bar_v1`/closed-only replay never silently gains forming-bar
-        access."""
-        if self._router is None:
-            raise NotImplementedError("forming_bar requires a wired SeriesRouter (R3-B)")
-        return self._router.forming_bar(instrument_id, as_of_ns)
+    def latest_quote(
+        self, instrument_id: str, as_of_ns: int | ReplayKey
+    ) -> QuoteEvent | None:
+        quote = self.quote_observation(instrument_id, as_of_ns)
+        if quote.state == "disabled":
+            raise NotImplementedError(
+                "quotes are disabled for this replay (quotes.enabled=false)"
+            )
+        return quote.event if quote.state == "usable" else None
+
+    def forming_bar(self, instrument_id: str, as_of_ns: int | ReplayKey):
+        if not self._wired:
+            raise NotImplementedError("forming_bar requires a wired SeriesRouter")
+        duration = INTERVAL_DURATIONS_NS[self._interval]
+        start = (cutoff_key(as_of_ns).available_at_ns // duration) * duration
+        return next(
+            (
+                v
+                for v in self._selected_versions(instrument_id, as_of_ns)
+                if v.bar_start_ns == start and v.status == "forming"
+            ),
+            None,
+        )
 
 
 class ClosedOnlyContext:
-    """Baseline strategy context: completed bars only (ORB/VWAP's current contract)."""
+    """Completed-bar capability; retains immutable observation evidence for this cutoff."""
 
-    def __init__(self, view: ReplayView, as_of_ns: int):
+    def __init__(self, view: ReplayView, as_of_ns: int | ReplayKey):
         self._view = view
-        self._as_of_ns = as_of_ns
+        self._as_of_ns = cutoff_key(as_of_ns)
+        self._references: set[str] = set()
 
-    def closed_bars(self, instrument_id: str) -> list[ProviderBarEvent]:
-        return self._view.closed_bars(instrument_id, self._as_of_ns)
+    def _remember(self, item):
+        if item is not None:
+            if isinstance(item, MarketEvent):
+                ref = f"event:{item.provider}:{item.feed}:{item.instrument_id}:{item.event_id}"
+            else:
+                key = item.publication_key
+                ref = (
+                    f"bar:{item.instrument_id}:{item.feed}:{item.interval}:{item.bar_start_ns}:"
+                    f"{key.available_at_ns}:{key.phase}:{key.sequence}"
+                )
+            self._references.add(ref)
+        return item
+
+    def input_references(self) -> tuple[str, ...]:
+        return tuple(sorted(self._references))
+
+    def closed_bars(self, instrument_id: str) -> list:
+        return [
+            self._remember(b)
+            for b in self._view.closed_bars(instrument_id, self._as_of_ns)
+        ]
 
 
 class IntrabarContext(ClosedOnlyContext):
-    """An explicitly opted-in variant with additional, separately-evaluated capabilities."""
-
     def forming_bar(self, instrument_id: str):
-        return self._view.forming_bar(instrument_id, self._as_of_ns)
+        return self._remember(self._view.forming_bar(instrument_id, self._as_of_ns))
 
-    def latest_trade(self, instrument_id: str) -> TradeEvent | None:
-        return self._view.latest_trade(instrument_id, self._as_of_ns)
+    def latest_trade(self, instrument_id: str):
+        return self._remember(self._view.latest_trade(instrument_id, self._as_of_ns))
 
-    def latest_quote(self, instrument_id: str) -> QuoteEvent | None:
-        return self._view.latest_quote(instrument_id, self._as_of_ns)
+    def quote_observation(self, instrument_id: str) -> QuoteObservation:
+        quote = self._view.quote_observation(instrument_id, self._as_of_ns)
+        self._remember(quote.event)
+        return quote
+
+    def latest_quote(self, instrument_id: str):
+        quote = self.quote_observation(instrument_id)
+        if quote.state == "disabled":
+            raise NotImplementedError(
+                "quotes are disabled for this replay (quotes.enabled=false)"
+            )
+        return quote.event if quote.state == "usable" else None

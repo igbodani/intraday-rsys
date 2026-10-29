@@ -345,3 +345,59 @@ def test_correction_without_new_conditions_keeps_the_original_eligibility():
     ))
     assert snap.close == Decimal(150)  # price updated; eligibility (ALL) unchanged since untouched
 
+
+# ---- IR-01 / R3I-10: a rejected correction leaves all state completely unchanged ----
+
+def test_rejected_correction_has_no_side_effects():
+    """R3I-10 regression: at 7084d4a, a correction with an unknown condition raised AFTER the
+    live price/size had already been overwritten to the rejected replacement value. The
+    contributor, its eligibility and the published history must be byte-for-byte identical
+    before and after a rejected correction."""
+    builder = _builder()
+    before = builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+
+    with pytest.raises(Exception):  # noqa: B017 (UnknownConditionError from the rule set)
+        builder.on_correction(TradeCorrectionEvent(
+            **_COMMON, event_id="bad", instrument_id="AAA",
+            event_time_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+            available_at_ns=parse_utc_timestamp_ns("2024-06-10T09:30:06Z"),
+            original_trade_id="T1", action="correct", corrected_price=Decimal(999), corrected_size=Decimal(10),
+            conditions=("SOME_UNDOCUMENTED_CODE",),
+        ))
+
+    after = builder.snapshot(before.bar_start_ns, parse_utc_timestamp_ns("2024-06-10T09:30:06Z"))
+    assert after.close == Decimal(100)  # NOT 999 -- the rejected price never applied
+    assert after.volume == Decimal(10)
+    assert after.trade_count == 1
+
+
+# ---- IR-01 / R3I-11: idempotent duplicate correction + explicit cross-bucket identity conflict ----
+
+def test_duplicate_correction_and_identity_conflict_are_safe():
+    builder = _builder()
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:31:00Z"))  # close the bucket
+
+    cancel = _cancel("C1", "T1", "2024-06-10T09:31:05Z")
+    first = builder.on_correction(cancel)
+    assert first.revision == 1
+
+    # Identical redelivery of the SAME cancel must be idempotent: no second revision.
+    second = builder.on_correction(cancel)
+    assert second.revision == 1
+    assert second.volume == Decimal(0)
+
+    # A bare trade_id reused in a DIFFERENT bucket is an explicit conflict, never a silent
+    # redirect of future correction lookups away from the original bucket (R3I-11).
+    with pytest.raises(ConflictingTradeError):
+        builder.on_trade(_trade("T1", "2024-06-10T09:35:05Z", "2024-06-10T09:35:05Z", 500, 1))
+
+    # The original bucket's correction index must still resolve to its own bucket.
+    with pytest.raises(UnresolvedCorrectionError):
+        builder.on_correction(_cancel("C2", "nonexistent", "2024-06-10T09:36:00Z"))
+    still_cancelled = builder.snapshot(
+        builder.bucket_start_ns(parse_utc_timestamp_ns("2024-06-10T09:30:05Z")),
+        parse_utc_timestamp_ns("2024-06-10T09:31:05Z"),
+    )
+    assert still_cancelled.volume == Decimal(0)
+

@@ -35,6 +35,7 @@ def _version(
         open=Decimal(open_), high=Decimal(high), low=Decimal(low), close=Decimal(close), volume=Decimal(volume),
         trade_count=trade_count, vwap_numerator=Decimal(vwap_numerator), vwap_denominator=Decimal(vwap_denominator),
         rule_set_id="fixture_rules_v1", source_event_ids=("T1", "T4"),
+        provider="alpaca", session_version="nyse-2024-v1",
     )
 
 
@@ -95,6 +96,7 @@ def test_first_publication_version_vs_provider_revision_is_not_comparable():
 def test_revised_version_can_compare_against_a_provider_revision():
     result = compare_bar_version_to_provider_bar(
         _version(revision=1, close=103, high=103), _provider_bar(bar_revision=2, close=103, high=103),
+        as_of_ns=END,
     )
     assert result.comparable is True
     assert result.match is True
@@ -124,3 +126,56 @@ def test_vwap_comparison_catches_a_real_discrepancy_at_declared_precision():
     result = compare_bar_version_to_provider_bar(version, provider, vwap_precision=2)
     assert result.match is False
     assert any(m.field == "vwap" for m in result.mismatches)
+
+
+# ---- IR-06 / R3I-14: count is independent evidence, and comparison prerequisites widen ----
+
+def test_count_mismatch_is_reported_with_default_arguments_no_vwap_precision():
+    """R3I-14 regression: at 7084d4a, count 1 vs 999 returned match=True when vwap_precision
+    was omitted, because the count check lived entirely inside the `vwap_precision is not
+    None` branch."""
+    result = compare_bar_version_to_provider_bar(
+        _version(trade_count=1), _provider_bar(trade_count=999),
+    )
+    assert result.comparable is True
+    assert result.match is False
+    assert any(m.field == "trade_count" for m in result.mismatches)
+
+
+def test_count_mismatch_is_also_reported_with_vwap_precision_enabled():
+    result = compare_bar_version_to_provider_bar(
+        _version(trade_count=1), _provider_bar(trade_count=999), vwap_precision=2,
+    )
+    assert result.match is False
+    assert any(m.field == "trade_count" for m in result.mismatches)
+
+
+def test_different_adjustment_mode_basis_is_not_comparable():
+    raw_version = _version()
+    adjusted_version = BarVersion(**{**raw_version.model_dump(), "adjustment_mode": "adjusted"})
+    result = compare_bar_version_to_provider_bar(adjusted_version, _provider_bar())
+    assert result.comparable is False
+    assert "adjustment_mode" in result.not_comparable_reason
+
+
+def test_invalid_quality_provider_bar_is_not_comparable():
+    invalid_provider = _provider_bar().model_copy(update={"quality_state": QualityState.INVALID})
+    result = compare_bar_version_to_provider_bar(_version(), invalid_provider)
+    assert result.comparable is False
+    assert "quality_state" in result.not_comparable_reason
+
+
+def test_invalidated_version_is_not_comparable():
+    result = compare_bar_version_to_provider_bar(_version(status='invalidated'), _provider_bar())
+    assert not result.comparable
+
+
+def test_revised_builder_cannot_silently_compare_with_initial_provider_publication():
+    result = compare_bar_version_to_provider_bar(_version(revision=1), _provider_bar())
+    assert not result.comparable
+
+
+def test_explicit_comparison_cutoff_rejects_future_publication():
+    provider = _provider_bar().model_copy(update={'available_at_ns':END+1})
+    result = compare_bar_version_to_provider_bar(_version(), provider, as_of_ns=END)
+    assert not result.comparable

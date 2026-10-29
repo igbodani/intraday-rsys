@@ -140,7 +140,9 @@ class TradeCorrectionEvent(MarketEvent):
     action: Literal["correct", "cancel"]
     corrected_price: Decimal | None = None
     corrected_size: Decimal | None = None
-    conditions: tuple[str, ...] = ()
+    # `None` means "conditions unchanged by this correction"; `()` means "explicitly cleared to
+    # no conditions" (IR-01 item 4) -- `if event.conditions:` cannot express both meanings.
+    conditions: tuple[str, ...] | None = None
     tape: str | None = None  # preserved verbatim (C10); never stripped or treated as blank
 
     @model_validator(mode="after")
@@ -163,6 +165,17 @@ class QuoteEvent(MarketEvent):
     ask_size: Decimal | None = None
     venue: str
     conditions: tuple[str, ...] = ()
+
+
+    @model_validator(mode="after")
+    def _quote_numbers(self):
+        for price in (self.bid_price, self.ask_price):
+            if price is not None and not _positive_finite(price):
+                raise ValueError("quote prices must be finite and positive when present")
+        for size in (self.bid_size, self.ask_size):
+            if size is not None and (not size.is_finite() or size < 0):
+                raise ValueError("quote sizes must be finite and nonnegative when present")
+        return self
 
 
 class ProviderBarEvent(MarketEvent):
@@ -241,3 +254,8 @@ class TimerEvent(MarketEvent):
 def event_timestamp_from_iso(raw: str) -> int:
     """Convenience wrapper so callers building fixtures don't import timestamps.py separately."""
     return parse_utc_timestamp_ns(raw)
+
+
+class BarCloseEvent(TimerEvent):
+    """Internal scheduled interval closure, never decoded from an external timer."""
+    boundary_name: Literal["bar_close"] = "bar_close"

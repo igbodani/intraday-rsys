@@ -59,7 +59,7 @@ def test_previously_returned_snapshot_is_unaffected_by_a_later_correction():
     snap_before = builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z"))
     builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:31:00Z"))
 
-    builder.on_trade(_trade("T2", "2024-06-10T09:30:20Z", price=200, size=1))
+    builder.on_trade(_trade("T2", "2024-06-10T09:30:20Z", available_at="2024-06-10T09:31:05Z", price=200, size=1))
 
     assert snap_before.close == Decimal(100)
     assert snap_before.volume == Decimal(10)
@@ -94,7 +94,7 @@ def test_new_trade_into_an_evicted_bucket_is_also_explicit_not_silent():
     builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:32:00Z"))
 
     with pytest.raises(EvictedBucketError):
-        builder.on_trade(_trade("T1-late", "2024-06-10T09:30:40Z"))
+        builder.on_trade(_trade("T1-late", "2024-06-10T09:30:40Z", available_at="2024-06-10T09:32:05Z"))
 
 
 def test_retention_does_not_evict_within_the_declared_limit():

@@ -1,0 +1,40 @@
+schema_version: 1
+mode: replay
+evidence_type: synthetic_only
+network_allowed: false
+input: ../fixtures/replay_trade_fixture_events.json
+replay:
+  input_mode: historical_trade
+  ordering_profile: trade_replay_v1
+  availability_model: recorded_receipt
+bars:
+  authority: trade_builder
+  rule_set_id: synthetic_test_fixture_rules:v1
+interval_policy:
+  interval: 1Min
+  session: regular
+  unit_policy: raw
+revision:
+  revision_policy: latest_version_asof
+  retention_limit: 500
+  unavailable_history_policy: typed_unavailable
+observation:
+  mode: intrabar
+  cadence: availability_batch
+  observer_id: synthetic_threshold:v1
+  threshold: '101'
+  on_revisions: false
+quotes:
+  enabled: false
+execution:
+  data_basis: inactive
+coverage:
+  required_boundary_name: window_end
+  required_boundary_at: '2024-06-10T13:31:00Z'
+  window_start_at: '2024-06-10T13:30:00Z'
+  available_through_at: '2024-06-10T13:31:15Z'
+  session_version: nyse-2024-v1
+  provider: alpaca
+  feed: fixture
+  instruments:
+  - AAA

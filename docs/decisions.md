@@ -31,24 +31,22 @@ Status: **Decided** = established direction; **Proposed** = specific candidate f
 
 ## Registered replay/data settings (implemented in `src/rsys/config.py`'s `ReplayConfig`; D22)
 
-Per `IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 9 -- declared as required interface points for R1–R3. As of the 2026-10-29 pass these are typed, validated fields on `ReplayConfig` (`configs/replay_bar_fixture.yaml`/`configs/replay_trade_fixture.yaml`), not merely proposed:
+The implemented configuration fields are listed below. Their synthetic values are software test settings, not approved market assumptions.
 
-| Setting | Purpose / rule |
+| Setting | Implemented rule |
 |---|---|
-| `replay.input_mode` | `completed_bars`, `historical_trades`, or `recorded_events` |
-| `replay.ordering_profile` | Explicit version: existing `bar_v1` phase profile or the new tested `trade_replay_v1` profile |
-| `replay.availability_model` | Recorded receipt or explicitly modeled delay; label the evidence class |
-| `bars.authority` | Provider snapshots or trade builder for a given series, never additive |
-| `bars.rule_set_id` / hash | Exact provider or synthetic fixture aggregation semantics, versioned |
-| `bars.interval` / session policy | Declared bucket boundaries; initially regular-session one-minute baseline |
-| `bars.revision_policy` | Versioned as-known updates; no retrospective decision mutation |
-| `bars.retention_policy` | Bounds and recovery behavior for correction lookup/state |
-| `strategy.observation_mode` | `closed_only` baseline; forming-bar access requires a separately specified variant |
-| `strategy.evaluation_cadence` | Closed-bar boundaries initially; intrabar cadence must be declared before its experiment |
-| `quotes.enabled` / freshness policy | Optional; enabling dependent behavior requires valid data and entitlement |
-| `execution.data_basis` | Distinguish conservative bar fills from subsequent-event trade estimates |
+| `replay.input_mode` | `completed_bar`, `historical_trade`, `recorded_event` |
+| `replay.ordering_profile` | `bar_v1` or `trade_replay_v1`; trades/quotes/recorded-event input require the latter |
+| `replay.availability_model`, `modeled_delay_ms` | Recorded receipt evidence or an explicitly declared modeled delay |
+| `bars.authority`, `rule_set_id` | One authority: provider publication or trade builder; only registered synthetic rules |
+| `interval_policy.interval`, `.session`, `.unit_policy` | `1Min`, `regular`, `raw` only |
+| `revision.revision_policy`, `.retention_limit`, `.unavailable_history_policy` | Latest version as of cutoff; declared contributor retention; explicit unavailable-history failure |
+| `observation.mode`, `.cadence`, `.observer_id`, `.threshold`, `.on_revisions` | Closed-only/intrabar capability, publication/batch cadence, optional named synthetic observer and revision opt-in |
+| `quotes.enabled`, `.freshness_limit_ms`, `.quality_policy` | Optional quotes with explicit synthetic freshness/quality policy |
+| `coverage.*` | Requested window, available-through time, source identity and instruments; separate source inventory/interval evidence required |
+| `execution.data_basis` | `inactive`; no execution exists yet |
 
-
+**R3 repair (2026-10-29):** frozen context collections and publication keys, availability-timed actions/closures, internally scheduled minute boundaries, enforced configuration, public quote usability and CLI synthetic observers are implemented. See `R3_REPAIR_RESULTS.md`. These are software semantics; D22 remains **Open**, as do the existing provider/market decisions. Raw-unit-only replay does not claim split-adjusted rolling features or position conversion, and unsupported straddled intervals produce non-success. ORB/VWAP baseline definitions are unchanged.
 
 1. Review the baseline bundle D04–D08, D14–D15 and D18. The exact definitions in this pack are ready for review.
 2. Confirm D09–D11 before market-account experiments. A fixture account does not answer these questions.

@@ -40,6 +40,22 @@ PROMOTION_GATE_LEAVES = {
     "promotion_gates.paper_observation.incident_handling",
 }
 
+# The subset of PROMOTION_GATE_LEAVES validated by `_is_method_reference` (IR-04/R3I-09): a
+# research gate requires a research-approved specification, and no method is research-approved
+# yet, so these leaves remain blocked even in an otherwise fully-populated synthetic profile.
+PROMOTION_GATE_METHOD_LEAVES = {
+    "promotion_gates.minimum_observations.dependent_observation_treatment",
+    "promotion_gates.net_return.metric_definition",
+    "promotion_gates.control_improvement.improvement_measure",
+    "promotion_gates.uncertainty.resampling_design",
+    "promotion_gates.uncertainty.acceptance_criterion",
+    "promotion_gates.cost_stress.acceptance_criteria",
+    "promotion_gates.concentration.limits",
+    "promotion_gates.concentration.diagnostics",
+    "promotion_gates.paper_observation.sample_requirement",
+    "promotion_gates.paper_observation.incident_handling",
+}
+
 EXPECTED_BASELINE_UNRESOLVED = {
     "feed", "data_manifest",
     "account.profile", "account.quantity_step", "account.minimum_quantity", "account.proceeds_availability",
@@ -384,7 +400,11 @@ def test_promotion_gates_partial_group_only_blocks_missing_leaves():
     result = validate_config(config)
     blocked = {b.field_path for b in result.blockers}
     assert "promotion_gates.minimum_observations.minimum_evaluation_days" not in blocked
-    assert "promotion_gates.minimum_observations.dependent_observation_treatment" not in blocked
+    assert "promotion_gates.minimum_observations.minimum_evaluation_trades" not in blocked
+    # A fixture-only method still blocks a research gate (IR-04/R3I-09), independent of this
+    # test's actual point: a present/well-formed sibling leaf is not ALSO blocked merely
+    # because the group is only partially filled.
+    assert "promotion_gates.minimum_observations.dependent_observation_treatment" in blocked
     assert "promotion_gates.drawdown.drawdown_ceiling" in blocked
 
 
@@ -407,14 +427,16 @@ def test_baseline_pending_config_blocks_every_unresolved_field():
     assert all(b.decision_id for b in result.blockers)
 
 
-# ---- Positive case: fully populated synthetic profile passes ----------------
+# ---- Positive case: fully populated synthetic profile passes, except unapproved gate methods ----
 
-def test_fully_populated_synthetic_research_profile_has_no_blockers():
-    """Proves validation isn't blanket rejection; synthetic values here are test-only (AGENTS.md)."""
+def test_fully_populated_synthetic_research_profile_has_no_blockers_except_unapproved_gate_methods():
+    """Proves validation isn't blanket rejection; synthetic values here are test-only (AGENTS.md).
+    The gate-method leaves remain blocked (IR-04/R3I-09): a fixture-only method is never
+    research-approved evidence, regardless of how fully the rest of the profile is populated."""
     config = parse_config(_fully_populated_synthetic_research_dict())
     result = validate_config(config)
-    assert result.ok
-    assert result.blockers == []
+    assert not result.ok
+    assert {b.field_path for b in result.blockers} == PROMOTION_GATE_METHOD_LEAVES
 
 
 # ---- H1 regression: implemented schema versions only -------------------------
@@ -471,7 +493,9 @@ def test_zero_is_still_a_legal_seed_and_zero_cost():
     _set_path(data, "execution.feed_delay_ms", 0)
     config = parse_config(data)
     result = validate_config(config)
-    assert result.ok
+    blocked = {b.field_path for b in result.blockers}
+    assert "experiment.seed" not in blocked
+    assert "execution.feed_delay_ms" not in blocked
 
 
 # ---- H1 regression: offset-free local cutoff time ----------------------------
@@ -536,11 +560,28 @@ def test_placeholder_method_string_is_insufficient_for_a_gate_method_field():
     assert any(b.field_path == "promotion_gates.uncertainty.resampling_design" for b in result.blockers)
 
 
-def test_versioned_method_reference_is_accepted_for_a_gate_method_field():
+def test_fixture_only_method_reference_never_satisfies_a_research_gate():
+    """R3I-09 regression: at 7084d4a, `synthetic_test_net_return:v1` (registered as
+    `fixture_only`) satisfied a research gate field. A research gate requires a
+    research-approved specification; no method is research-approved yet, so every declared
+    fixture-only reference must still block a research profile, however well-formed."""
     data = _fully_populated_synthetic_research_dict()
     config = parse_config(data)
     result = validate_config(config)
-    assert "promotion_gates.uncertainty.resampling_design" not in {b.field_path for b in result.blockers}
+    assert "promotion_gates.uncertainty.resampling_design" in {b.field_path for b in result.blockers}
+
+
+def test_registered_fixture_only_method_resolves_in_the_registry_itself():
+    """A separate, legitimate synthetic-registry test (IR-04): `resolve_method` recognizes a
+    declared fixture-only method as REGISTERED (useful for e.g. a replay fixture's own
+    `bars.rule_set_id`), which is a different question from whether it may satisfy a research
+    gate (it may not -- see the regression above)."""
+    from rsys.registry import METHOD_REGISTRY, resolve_method
+
+    spec = resolve_method("synthetic_test_net_return:v1")
+    assert spec is not None
+    assert spec.evidence_class == "fixture_only"
+    assert METHOD_REGISTRY["synthetic_test_net_return:v1"] is spec
 
 
 def test_syntactically_valid_but_unregistered_method_reference_is_rejected():
@@ -652,6 +693,8 @@ def test_replay_enabled_quotes_without_a_freshness_policy_is_rejected():
 def test_replay_enabled_quotes_with_explicit_policy_is_accepted():
     data = _replay_dict()
     data["quotes"] = {"enabled": True, "freshness_limit_ms": 500, "quality_policy": "synthetic_test_quote_policy:v1"}
+    data["replay"]["input_mode"] = "recorded_event"
+    data["replay"]["ordering_profile"] = "trade_replay_v1"
     parse_config(data)  # must not raise
 
 
@@ -693,5 +736,23 @@ def test_replay_retention_limit_must_be_positive_when_set():
 def test_cli_validate_exits_zero_for_both_replay_fixture_configs():
     assert main(["validate", "--config", str(REPLAY_BAR_CONFIG)]) == EXIT_SUCCESS
     assert main(["validate", "--config", str(REPLAY_TRADE_CONFIG)]) == EXIT_SUCCESS
+
+
+# ---- IR-04 / R3I-08: input_mode/authority must describe the same actual data -----------
+
+def test_completed_bar_input_mode_rejects_trade_builder_authority():
+    """A completed-bar input stream has no trades to build from; the two settings must agree."""
+    data = _replay_dict()  # replay.input_mode=completed_bar, bars.authority=provider_publication
+    _set_path(data, "bars.authority", "trade_builder")
+    with pytest.raises(ConfigError):
+        parse_config(data)
+
+
+def test_historical_trade_input_mode_rejects_provider_publication_authority():
+    data = copy.deepcopy(yaml.safe_load(REPLAY_TRADE_CONFIG.read_text(encoding="utf-8")))
+    assert data["replay"]["input_mode"] == "historical_trade"
+    _set_path(data, "bars.authority", "provider_publication")
+    with pytest.raises(ConfigError):
+        parse_config(data)
 
 

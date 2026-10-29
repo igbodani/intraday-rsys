@@ -13,7 +13,7 @@ fixture's zero-cost test simplifications.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -29,6 +29,13 @@ from pydantic import (
     model_validator,
 )
 
+from rsys.calendar import (
+    CALENDAR_VERSION,
+    CalendarCoverageError,
+    session_close_utc,
+    session_open_utc,
+)
+from rsys.data.timestamps import parse_utc_timestamp_ns
 from rsys.registry import REGISTRY, _nonnegative, _positive_int, _positive_number
 
 # Implemented schema versions only; a parsed, in-range integer is not proof a newer/older
@@ -389,22 +396,32 @@ class ReplayInputConfig(BaseModel):
     ordering_profile: Literal["bar_v1", "trade_replay_v1"]
     # Never label reconstructed/modeled timing as captured-live.
     availability_model: Literal["recorded_receipt", "modeled_availability"]
+    modeled_delay_ms: OptionalNonBoolInt = None
+
+    @model_validator(mode="after")
+    def _timing_model(self):
+        if self.availability_model == "modeled_availability":
+            if self.modeled_delay_ms is None or self.modeled_delay_ms < 0:
+                raise ValueError("modeled timing requires an explicit nonnegative modeled_delay_ms")
+        elif self.modeled_delay_ms is not None:
+            raise ValueError("recorded timing must not declare a modeled delay")
+        return self
 
 
 class BarsAuthorityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Exactly one authoritative source per series.
     authority: Literal["provider_publication", "trade_builder"]
-    rule_set_id: str
+    rule_set_id: Literal["synthetic_test_fixture_rules:v1", "fixture_rules_v1"]
 
 
 class IntervalPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    interval: str
+    interval: Literal["1Min"]
     # Supported v1 behavior (D06/D07): regular-session data only.
     session: Literal["regular"]
     # Matches the decided units policy (D20) already enforced by DataAdjustmentConfig.
-    unit_policy: Literal["raw", "splits_effective_and_known_asof"]
+    unit_policy: Literal["raw"]
 
 
 class RevisionRetentionConfig(BaseModel):
@@ -427,11 +444,21 @@ class ObservationConfig(BaseModel):
     mode: Literal["closed_only", "intrabar"]
     # Unsupported per-trade/quote cadence is rejected here, not silently downgraded.
     cadence: Literal["completed_bar_boundary", "availability_batch"]
+    observer_id: Literal["none", "synthetic_threshold:v1", "synthetic_closed_recorder:v1"] = "none"
+    threshold: OptionalNonBoolDecimal = None
+    on_revisions: bool = False
 
     @model_validator(mode="after")
     def _check_mode_cadence_compatibility(self) -> ObservationConfig:
         if self.mode == "closed_only" and self.cadence != "completed_bar_boundary":
             raise ValueError("observation.mode=closed_only requires cadence=completed_bar_boundary")
+        if self.observer_id == "synthetic_threshold:v1":
+            if self.mode != "intrabar" or self.threshold is None or not _positive_number(self.threshold):
+                raise ValueError("synthetic threshold observer requires intrabar mode and a positive threshold")
+        elif self.threshold is not None:
+            raise ValueError("threshold is only supported by the synthetic threshold observer")
+        if self.observer_id == "synthetic_closed_recorder:v1" and self.mode != "closed_only":
+            raise ValueError("synthetic closed recorder requires closed_only mode")
         return self
 
 
@@ -439,7 +466,7 @@ class QuoteSettingsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool
     freshness_limit_ms: OptionalNonBoolInt = None
-    quality_policy: str | None = None
+    quality_policy: Literal["synthetic_test_quote_policy:v1"] | None = None
 
     @model_validator(mode="after")
     def _check_enabled_requires_explicit_policy(self) -> QuoteSettingsConfig:
@@ -460,6 +487,45 @@ class ReplayExecutionConfig(BaseModel):
     data_basis: Literal["inactive"]
 
 
+class CoverageConfig(BaseModel):
+    """Declared single-session replay window. Source completeness is checked separately."""
+    model_config = ConfigDict(extra="forbid")
+    required_boundary_name: Literal["window_end", "session_close"]
+    required_boundary_at: str
+    window_start_at: str
+    available_through_at: str
+    session_version: Literal[CALENDAR_VERSION]
+    provider: str
+    feed: str
+    instruments: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _window(self):
+        start = parse_utc_timestamp_ns(self.window_start_at)
+        end = parse_utc_timestamp_ns(self.required_boundary_at)
+        through = parse_utc_timestamp_ns(self.available_through_at)
+        if not start < end <= through:
+            raise ValueError("coverage requires start < boundary <= available_through")
+        minute = 60_000_000_000
+        if start % minute or end % minute:
+            raise ValueError("coverage window must align to minute boundaries")
+        day = datetime.fromtimestamp(start // 1_000_000_000, UTC).date()
+        try:
+            opening = parse_utc_timestamp_ns(session_open_utc(day).isoformat())
+            closing = parse_utc_timestamp_ns(session_close_utc(day).isoformat())
+        except CalendarCoverageError as exc:
+            raise ValueError("coverage date is outside the supported trading calendar") from exc
+        if not opening <= start < end <= closing:
+            raise ValueError("coverage window must lie within one regular exchange session")
+        if self.required_boundary_name == "session_close" and end != closing:
+            raise ValueError("session_close must equal the exchange session close; use window_end for fixtures")
+        if not self.provider.strip() or not self.feed.strip():
+            raise ValueError("coverage provider and feed are required")
+        if not self.instruments or any(not i.strip() for i in self.instruments) or len(set(self.instruments)) != len(self.instruments):
+            raise ValueError("coverage instruments must be nonblank and unique")
+        return self
+
+
 class ReplayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -475,6 +541,7 @@ class ReplayConfig(BaseModel):
     observation: ObservationConfig
     quotes: QuoteSettingsConfig
     execution: ReplayExecutionConfig
+    coverage: CoverageConfig
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -482,6 +549,31 @@ class ReplayConfig(BaseModel):
         if isinstance(v, bool) or v not in _IMPLEMENTED_SCHEMA_VERSIONS:
             raise ValueError("schema_version must be one of the implemented schema versions")
         return v
+
+    @model_validator(mode="after")
+    def _check_input_mode_matches_authority(self) -> ReplayConfig:
+        """IR-04: a completed-bar input stream has no trades to build from, and a trade stream
+        has no provider publications to compare against -- input_mode and bars.authority must
+        describe the SAME actual data, not merely parse as individually-valid strings."""
+        compatible = {
+            "completed_bar": "provider_publication",
+            "historical_trade": "trade_builder",
+        }
+        expected = compatible.get(self.replay.input_mode)
+        if expected is not None and self.bars.authority != expected:
+            raise ValueError(
+                f"replay.input_mode={self.replay.input_mode!r} requires bars.authority="
+                f"{expected!r}, not {self.bars.authority!r}"
+            )
+        if self.replay.input_mode in ("historical_trade", "recorded_event") and self.replay.ordering_profile != "trade_replay_v1":
+            raise ValueError("trade/recorded-event replay requires trade_replay_v1")
+        if self.replay.input_mode == "completed_bar" and self.quotes.enabled:
+            raise ValueError("quote streams require recorded_event input mode")
+        if self.quotes.enabled and self.replay.ordering_profile != "trade_replay_v1":
+            raise ValueError("quotes require trade_replay_v1")
+        if self.observation.mode == "intrabar" and self.bars.authority != "trade_builder":
+            raise ValueError("forming-bar observation requires trade_builder authority")
+        return self
 
 
 RsysConfig = FixtureConfig | ResearchConfig | ReplayConfig
@@ -532,7 +624,12 @@ def parse_config(data: dict[str, Any]) -> RsysConfig:
 
 
 def load_config(path: str | Path) -> RsysConfig:
-    return parse_config(load_raw(path))
+    config = parse_config(load_raw(path))
+    if isinstance(config, ReplayConfig):
+        source = Path(config.input)
+        if not source.is_absolute():
+            config.input = str((Path(path).resolve().parent / source).resolve())
+    return config
 
 
 def _get_by_path(tree: dict[str, Any], dotted_path: str) -> Any:

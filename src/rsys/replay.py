@@ -14,7 +14,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum, StrEnum
 
-from rsys.data.events import EventKind, MarketEvent
+from rsys.data.events import BarCloseEvent, EventKind, MarketEvent
+from rsys.data.keys import ReplayKey
 
 
 class ReplayProfile(StrEnum):
@@ -69,7 +70,9 @@ def event_phase(event: MarketEvent, profile: ReplayProfile) -> Phase:
     is a post-closure revision (phase 37 in the trade profile); its first/closing version
     publishes at phase 20, same as `bar_v1`.
     """
-    if event.kind in (EventKind.TRADE, EventKind.TRADE_CORRECTION, EventKind.QUOTE):
+    if isinstance(event, BarCloseEvent):
+        phase = Phase.BAR_PUBLISH
+    elif event.kind in (EventKind.TRADE, EventKind.TRADE_CORRECTION, EventKind.QUOTE):
         phase = Phase.MARKET_DATA_APPLY
     elif event.kind == EventKind.PROVIDER_BAR:
         is_revision = getattr(event, "bar_revision", 1) > 1
@@ -118,11 +121,29 @@ def same_time_batch(ordered_events: Sequence[MarketEvent], available_at_ns: int)
     return [e for e in ordered_events if e.available_at_ns == available_at_ns]
 
 
-def assert_stream_covers_boundary(events: Sequence[MarketEvent], required_boundary_ns: int) -> None:
+def assert_stream_covers_boundary(
+    events: Sequence[MarketEvent], required_boundary_ns: int,
+    *, required_boundary_name: str | None = None, required_session_version: str | None = None,
+) -> None:
     """A required closure/coverage boundary (e.g. the session-close timer) must actually appear;
-    EOF before it marks the run incomplete rather than silently treating it as closed."""
-    if not any(e.kind == EventKind.TIMER and e.event_time_ns >= required_boundary_ns for e in events):
-        raise IncompleteReplayError(f"stream ended before required boundary {required_boundary_ns}")
+    EOF before it marks the run incomplete rather than silently treating it as closed.
+
+    IR-03/R3I-06: when given, `required_boundary_name`/`required_session_version` must ALSO
+    match -- an unrelated later timer (wrong boundary identity or wrong calendar/session) must
+    never satisfy this check merely by sharing `EventKind.TIMER` and a late enough time.
+    """
+    def _satisfies(e: MarketEvent) -> bool:
+        if e.kind != EventKind.TIMER or e.event_time_ns < required_boundary_ns:
+            return False
+        if required_boundary_name is not None and getattr(e, "boundary_name", None) != required_boundary_name:
+            return False
+        return required_session_version is None or e.session_version == required_session_version
+
+    if not any(_satisfies(e) for e in events):
+        raise IncompleteReplayError(
+            f"stream ended before required boundary {required_boundary_ns} "
+            f"(boundary_name={required_boundary_name!r}, session_version={required_session_version!r})"
+        )
 
 
 class ReplayStream:
@@ -158,6 +179,11 @@ class ReplayStream:
             return None
         return self._items[self._dispatched_count]
 
+    def all_items(self) -> tuple[MarketEvent, ...]:
+        """The full dispatch-ordered event collection, including already-dispatched items --
+        a read of the declared schedule, not a way to bypass availability bounding."""
+        return tuple(self._items)
+
     def insert_derived(self, event: MarketEvent) -> None:
         """Insert a derived event (e.g. a bar revision produced while processing a correction).
 
@@ -179,3 +205,8 @@ class ReplayStream:
         remaining.append(event)
         remaining.sort(key=lambda e: sort_key(e, self._profile))
         self._items = self._items[: self._dispatched_count] + remaining
+
+
+def event_key(event: MarketEvent, profile: ReplayProfile) -> ReplayKey:
+    ns, phase, sequence, tie = sort_key(event, profile)
+    return ReplayKey(ns, phase, sequence, tie)
