@@ -5,16 +5,17 @@ IN_POSITION -> DONE/EXPIRED. Produces `rsys.orders.Proposal` objects; sizing, ac
 execution are external concerns. Bar-price proxy `p = (high + low + close) / 3`; session
 VWAP proxy is the cumulative `sum(p * volume) / sum(volume)`, reset each session.
 
-Honesty note: not wired into `PhaseEngine` or a real multi-symbol replay feed; the scanner
-candidate flag is supplied by the caller per bar -- see `rsys.scanner` and
-docs/M2_IMPLEMENTATION_STATUS.md.
+The synthetic session runner supplies completed bars from bounded ReplayRunner contexts;
+scanner scores are declared fixture inputs. Real historical scanner features remain pending.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import Decimal
 from enum import Enum
 
+from rsys.money import ceil_step, floor_step
 from rsys.orders import Proposal
 
 STRATEGY_ID = "vwap_touch_hold_v1"
@@ -22,11 +23,11 @@ TICK = Decimal("0.01")
 
 
 def _floor_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
-    return value.quantize(tick, rounding=ROUND_FLOOR)
+    return floor_step(value, tick)
 
 
 def _ceil_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
-    return value.quantize(tick, rounding=ROUND_CEILING)
+    return ceil_step(value, tick)
 
 
 class VwapState(str, Enum):
@@ -75,6 +76,8 @@ class VwapStrategy:
         self.cumulative_volume = Decimal(0)
         self._vwap_history: list[Decimal | None] = []
         self._bar_count = 0
+        self._last_start: int | None = None
+        self._history_invalid = False
         self._previous_high: Decimal | None = None
         self.touch_low: Decimal | None = None
         self.window_lows: list[Decimal] = []
@@ -86,7 +89,11 @@ class VwapStrategy:
         proxy = (bar.high + bar.low + bar.close) / 3
         self.cumulative_pv += proxy * bar.volume
         self.cumulative_volume += bar.volume
-        vwap = self.cumulative_pv / self.cumulative_volume if self.cumulative_volume > 0 else None
+        vwap = (
+            self.cumulative_pv / self.cumulative_volume
+            if self.cumulative_volume > 0
+            else None
+        )
         self._vwap_history.append(vwap)
         return vwap
 
@@ -97,21 +104,42 @@ class VwapStrategy:
         current, past = self._vwap_history[-1], self._vwap_history[-1 - lookback]
         return current is not None and past is not None and current > past
 
-    def on_completed_bar(self, bar: CompletedBar, *, is_candidate: bool) -> Proposal | None:
-        if self.state in (VwapState.DONE, VwapState.EXPIRED, VwapState.PROPOSED, VwapState.IN_POSITION):
+    def on_completed_bar(
+        self, bar: CompletedBar, *, is_candidate: bool
+    ) -> Proposal | None:
+        if self.state in (VwapState.DONE, VwapState.EXPIRED):
             return None
 
+        if (
+            self._last_start is not None
+            and bar.bar_start_ms
+            != self._last_start + self.config.base_interval_minutes * 60_000
+        ):
+            self._history_invalid = True
+            # Recovery is unspecified: conservatively disable this session, not a guessed refill.
+            if self.state not in (VwapState.IN_POSITION, VwapState.PROPOSED):
+                self.state = VwapState.EXPIRED
+            return None
+        self._last_start = bar.bar_start_ms
         previous_high = self._previous_high
         vwap = self._update_vwap(bar)
         self._bar_count += 1
         self._previous_high = bar.high
 
-        if self.config.entry_deadline_ms is not None and bar.available_at_ms >= self.config.entry_deadline_ms:
+        if self.state in (VwapState.PROPOSED, VwapState.IN_POSITION):
+            return None  # keep cumulative observations current while lifecycle is externally managed
+        if (
+            self.config.entry_deadline_ms is not None
+            and bar.available_at_ms >= self.config.entry_deadline_ms
+        ):
             self.state = VwapState.EXPIRED
             return None
 
         if self.state == VwapState.WARMUP:
-            if self._bar_count >= self.config.warmup_bars and self.cumulative_volume > 0:
+            if (
+                self._bar_count >= self.config.warmup_bars
+                and self.cumulative_volume > 0
+            ):
                 self.state = VwapState.IDLE
             return None
 
@@ -124,7 +152,7 @@ class VwapStrategy:
             return None
 
         if self.state == VwapState.ARMED:
-            if bar.low <= vwap and bar.close >= vwap:
+            if bar.low <= vwap and bar.close >= vwap and self._slope_rising():
                 self.state = VwapState.PULLBACK
                 self.touch_low = bar.low
                 self.window_lows = [bar.low]
@@ -135,12 +163,19 @@ class VwapStrategy:
             return None
 
         if self.state == VwapState.PULLBACK:
-            return self._on_pullback_bar(bar, vwap, previous_high, is_candidate=is_candidate)
+            return self._on_pullback_bar(
+                bar, vwap, previous_high, is_candidate=is_candidate
+            )
 
         return None
 
     def _on_pullback_bar(
-        self, bar: CompletedBar, vwap: Decimal, previous_high: Decimal | None, *, is_candidate: bool,
+        self,
+        bar: CompletedBar,
+        vwap: Decimal,
+        previous_high: Decimal | None,
+        *,
+        is_candidate: bool,
     ) -> Proposal | None:
         self.age += 1
         self.window_lows.append(bar.low)
@@ -151,18 +186,35 @@ class VwapStrategy:
 
         buffer = self.config.confirmation_buffer_ticks * self.config.tick
         confirmed = (
-            2 <= self.age <= self.config.pullback_max_bars and bar.close > vwap + buffer
-            and previous_high is not None and bar.close > previous_high + buffer and is_candidate
+            2 <= self.age <= self.config.pullback_max_bars
+            and bar.close > vwap + buffer
+            and previous_high is not None
+            and bar.close > previous_high + buffer
+            and is_candidate
         )
         if confirmed:
-            self.stop = _floor_tick(min(self.window_lows) - self.config.tick, self.config.tick)
+            self.stop = _floor_tick(
+                min(self.window_lows) - self.config.tick, self.config.tick
+            )
             self.state = VwapState.PROPOSED
-            expiry_ms = 2 * self.config.base_interval_minutes * 60_000
+            interval = self.config.base_interval_minutes * 60_000
+            expiry_ms = (
+                bar.available_at_ms // interval + 2
+            ) * interval - bar.available_at_ms
             if self.config.entry_deadline_ms is not None:
-                expiry_ms = min(expiry_ms, self.config.entry_deadline_ms - bar.available_at_ms)
+                expiry_ms = min(
+                    expiry_ms, self.config.entry_deadline_ms - bar.available_at_ms
+                )
             proposal = Proposal(
-                symbol=self.symbol, quantity=Decimal(0), signal_price=bar.close, stop=self.stop, target=None,
-                decision_time_ms=bar.available_at_ms, strategy_id=STRATEGY_ID, expiry_ms=expiry_ms,
+                symbol=self.symbol,
+                quantity=Decimal(0),
+                signal_price=bar.close,
+                stop=self.stop,
+                target=None,
+                decision_time_ms=bar.available_at_ms,
+                strategy_id=STRATEGY_ID,
+                expiry_ms=expiry_ms,
+                proposal_id=f"{STRATEGY_ID}:{self.symbol}:{bar.bar_start_ms}",
             )
             self.proposals.append(proposal)
             return proposal
@@ -173,7 +225,9 @@ class VwapStrategy:
 
     def on_rejected_or_expired(self) -> None:
         if self.state == VwapState.PROPOSED:
-            self.state = VwapState.IDLE  # require a new arm and later touch
+            self.state = (
+                VwapState.EXPIRED if self._history_invalid else VwapState.IDLE
+            )  # require a new arm and later touch
 
     def on_filled(self, entry_fill: Decimal) -> Decimal:
         risk = entry_fill - self.stop

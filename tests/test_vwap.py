@@ -69,8 +69,8 @@ def test_vwap02_warmup_and_zero_volume():
     zero_vol_bar = CompletedBar(0, 0, Decimal(10), Decimal(10), Decimal(10), Decimal(10), Decimal(0))
     assert strategy.on_completed_bar(zero_vol_bar, is_candidate=True) is None
     assert strategy.cumulative_volume == Decimal(0)  # a zero-volume bar contributes zero weight
-    for _ in range(3):
-        bar = CompletedBar(0, 0, Decimal(10), Decimal(10), Decimal(10), Decimal(10), Decimal(1))
+    for i in range(1, 4):
+        bar = CompletedBar(i * 60_000, (i + 1) * 60_000, Decimal(10), Decimal(10), Decimal(10), Decimal(10), Decimal(1))
         strategy.on_completed_bar(bar, is_candidate=True)
     assert strategy.state == VwapState.IDLE  # warmup satisfied once cumulative volume is positive
 

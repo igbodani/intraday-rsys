@@ -5,6 +5,7 @@ network call is required to open the rendered file.
 Honesty note: renders only `run_cli.py`'s synthetic `StandaloneRunner` manifests/traces,
 not `rsys replay` attempts -- see docs/M2_IMPLEMENTATION_STATUS.md.
 """
+
 from __future__ import annotations
 
 import html
@@ -30,7 +31,13 @@ def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]
         lines = trace_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise ReportError(f"cannot read trace: {trace_path}") from exc
-    return manifest, [json.loads(line) for line in lines if line]
+    try:
+        records = [json.loads(line) for line in lines if line]
+    except json.JSONDecodeError as exc:
+        raise ReportError("trace is not valid JSONL") from exc
+    if manifest.get("status", "success") != "success" or "metrics" not in manifest:
+        raise ReportError("attempt did not complete successfully")
+    return manifest, records
 
 
 def _esc(value: Any) -> str:
@@ -38,12 +45,19 @@ def _esc(value: Any) -> str:
 
 
 def _metrics_table(metrics: dict[str, Any]) -> str:
-    rows = "".join(f"<tr><td>{_esc(k)}</td><td>{_esc(v)}</td></tr>" for k, v in metrics.items())
+    rows = "".join(
+        f"<tr><td>{_esc(k)}</td><td>{_esc(v)}</td></tr>" for k, v in metrics.items()
+    )
     return f"<table><caption>Metrics</caption><tbody>{rows}</tbody></table>"
 
 
 def _decisions_table(records: list[dict[str, Any]]) -> str:
-    decisions = [r for r in records if r.get("kind") == "decision"]
+    by_time = {
+        r["available_at_ms"]: r
+        for r in records
+        if r.get("kind") in ("decision", "accept")
+    }
+    decisions = [by_time[t] for t in sorted(by_time)]
     header = "<tr><th>time (ms)</th><th>candidates</th><th>proposed</th><th>accepted</th><th>rejected</th></tr>"
     rows = "".join(
         f"<tr><td>{_esc(d['available_at_ms'])}</td><td>{_esc(d['candidates'])}</td>"
@@ -66,7 +80,11 @@ def _fills_table(records: list[dict[str, Any]]) -> str:
 
 def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> str:
     trade_count = manifest["metrics"]["completed_trade_count"]
-    status_label = "no completed trades" if trade_count == 0 else f"{trade_count} completed trade(s)"
+    status_label = (
+        "no completed trades"
+        if trade_count == 0
+        else f"{trade_count} completed trade(s)"
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>

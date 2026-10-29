@@ -281,6 +281,43 @@ class ReplayRunner:
         self.processed.append(event)
         self.results.append(result)
 
+    def domain_engine(self, handler):
+        """Bind synthetic execution to this runner's source clock and frozen contexts.
+
+        Source and domain events share ReplayKey and one forward-only phase queue.
+        The caller owns domain policy; only this runner applies market publications.
+        Create once, before dispatch. The returned engine accepts later-phase timers.
+        """
+        from rsys.phase_engine import PhaseEngine, PhaseEvent
+
+        if self.processed or getattr(self, "_domain_bound", False):
+            raise ValueError(
+                "domain engine must bind a fresh replay runner exactly once"
+            )
+        self._domain_bound = True
+
+        def dispatch(event):
+            if event.kind == "replay_source":
+                self._dispatch_one(event.payload["source"])
+            return handler(event)
+
+        engine = PhaseEngine(on_dispatch=dispatch)
+        for source in self._stream:
+            key = event_key(source, self._profile)
+            engine.enqueue(
+                PhaseEvent(
+                    f"source:{source.event_id}",
+                    key.available_at_ns,
+                    key.phase,
+                    "replay_source",
+                    source.instrument_id,
+                    {"source": source},
+                    key.sequence,
+                    key.tie,
+                )
+            )
+        return engine
+
     def run_to_completion(self) -> list[MarketEvent]:
         for event in self._stream:
             self._dispatch_one(event)

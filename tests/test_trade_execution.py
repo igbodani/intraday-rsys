@@ -59,7 +59,7 @@ def test_t04_stop_and_target_use_the_observed_trade_sequence():
         stop=Decimal(98), target=Decimal(104), mark=Decimal(100),
     )
     adapter = TradeExecutionAdapter()
-    adapter.entry_trade_id = "t-entry"
+    adapter.activate_seeded_position("t-entry", 1000, 1000)
     # Target is touched BEFORE the stop in this observed sequence: target wins (no bar-mode
     # "stop always wins" rule applies, since the real order is known).
     target_first = Trade("t-a", event_time_ms=2_000, available_at_ms=2_000, price=Decimal(105))
@@ -74,7 +74,7 @@ def test_t05_entry_trade_cannot_also_close_the_new_position():
         stop=Decimal(98), target=Decimal(104), mark=Decimal(100),
     )
     adapter = TradeExecutionAdapter()
-    adapter.entry_trade_id = "t-entry"
+    adapter.activate_seeded_position("t-entry", 1000, 1000)
     entry_trade = Trade("t-entry", event_time_ms=1_500, available_at_ms=1_500, price=Decimal(97))
     outcome = adapter.consider_exit(position, entry_trade)
     assert outcome.status == "REJECTED_SELF_CONSUMED"
@@ -90,7 +90,7 @@ def test_t05b_gap_through_stop_uses_the_adverse_print_and_actual_entry_rejects_t
         symbol="AAA", quantity=Decimal(5), entry_price=Decimal(100), basis=Decimal(500),
         stop=Decimal(98), target=Decimal(104), mark=Decimal(100),
     )
-    adapter.entry_trade_id = "t-entry"
+    adapter.activate_seeded_position("t-entry", 1000, 1000)
     adverse_print = Trade("t-2", event_time_ms=2_000, available_at_ms=2_000, price=Decimal(96))
     outcome = adapter.consider_exit(position, adverse_print)
     assert outcome.status == FILLED
@@ -140,6 +140,6 @@ def test_no_eligible_trade_yet_is_skipped_not_a_fabricated_fill():
         stop=Decimal(98), target=Decimal(104), mark=Decimal(100),
     )
     adapter = TradeExecutionAdapter()
-    adapter.entry_trade_id = "t-entry"
+    adapter.activate_seeded_position("t-entry", 1000, 1000)
     flat_print = Trade("t-1", event_time_ms=2_000, available_at_ms=2_000, price=Decimal(101))
     assert adapter.consider_exit(position, flat_print).status == SKIPPED

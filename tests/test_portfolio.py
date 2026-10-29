@@ -71,5 +71,6 @@ def test_two_reservations_cannot_overcommit_shared_cash():
 def test_release_reservation_never_goes_negative():
     pf = _p(total="1000")
     pf.reserve(Decimal(100))
-    pf.release_reservation(Decimal(500))  # releasing more than reserved clamps at zero
-    assert pf.reserved_cash == Decimal(0)
+    with pytest.raises(ValueError):
+        pf.release_reservation(Decimal(500))
+    assert pf.reserved_cash == Decimal(100)

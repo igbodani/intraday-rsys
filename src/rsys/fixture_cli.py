@@ -1,8 +1,8 @@
 """`rsys fixture` orchestration glue: loads fixtures/cases.json, runs each requested case
-through FixtureEngine, retains one evidence attempt per invocation (and one run record per
-case) via the existing experiments/storage lifecycle, and reports a non-zero exit code if
+through FixtureEngine, retains one evidence attempt per invocation (one run record for the selected cases) via the existing experiments/storage lifecycle, and reports a non-zero exit code if
 any case's declared checkpoints/final-state fields do not match.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +39,10 @@ def _json_default(obj: Any) -> Any:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True, default=_json_default), encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True, default=_json_default),
+        encoding="utf-8",
+    )
 
 
 class FixtureCaseOutcome:
@@ -52,60 +55,103 @@ class FixtureCaseOutcome:
         return not self.problems
 
 
-def run_fixture_cli(case_selector: str, out_dir: Path) -> tuple[list[FixtureCaseOutcome], Path, Path]:
+def run_fixture_cli(
+    case_selector: str, out_dir: Path
+) -> tuple[list[FixtureCaseOutcome], Path, Path]:
     """Runs the selected case(s), writes a retained trace/manifest under `out_dir`, and
     returns (outcomes, trace_path, manifest_path). Raises FixtureCliError for an unknown
     case id or unreadable fixture file."""
-    cases = _load_cases()
-    if case_selector == "all":
-        selected = [cases[cid] for cid in sorted(cases)]
-    elif case_selector in cases:
-        selected = [cases[case_selector]]
-    else:
-        raise FixtureCliError(f"unknown fixture case: {case_selector!r}")
+    import hashlib
 
+    raw, input_error = None, None
+    try:
+        raw = _CASES_PATH.read_bytes()
+    except OSError:
+        input_error = FixtureCliError("cannot read fixture cases file")
     storage = RunStorage(out_dir)
     try:
+        provenance = (
+            {"data_identity": "sha256:" + hashlib.sha256(raw).hexdigest()}
+            if raw is not None
+            else {"data_unavailable_reason": "fixture input could not be read"}
+        )
         record = start_run(
-            storage, hypothesis="Offline synthetic account/execution fixture check (M2-01).",
-            phase="fixture", resolved_config={"case_selector": case_selector},
-            data_identity=f"sha256:{_CASES_PATH.stat().st_mtime_ns}",
+            storage,
+            hypothesis="Offline synthetic account/execution fixture check (M2-01).",
+            phase="fixture",
+            resolved_config={"case_selector": case_selector},
             repo_root=Path(__file__).resolve().parents[2],
+            **provenance,
         )
         attempt_dir = out_dir / "attempts" / record.run_id
         attempt_dir.mkdir(parents=True, exist_ok=False)
-        trace_path = attempt_dir / "trace.jsonl"
-        manifest_path = attempt_dir / "manifest.json"
-        outcomes: list[FixtureCaseOutcome] = []
-        trace_records: list[dict[str, Any]] = []
+        trace_path, manifest_path = (
+            attempt_dir / "trace.jsonl",
+            attempt_dir / "manifest.json",
+        )
+        outcomes, trace_records = [], []
+        complete = False
         try:
             with run_context(storage, record):
-                for case in selected:
-                    result = run_case(case)
-                    problems = compare_case(case, result)
-                    outcomes.append(FixtureCaseOutcome(case["id"], problems))
-                    trace_records.append({
-                        "case_id": case["id"], "ok": not problems, "problems": problems,
-                        "checkpoints": [asdict(cp) for cp in result.checkpoints],
-                        "rejection": result.rejection, "final_cash": result.final_cash,
-                        "final_equity": result.final_equity, "final_quantity": result.final_quantity,
-                        "positions": result.positions,
-                    })
-                if any(not o.ok for o in outcomes):
-                    raise _FixtureMismatch(f"{sum(1 for o in outcomes if not o.ok)} of {len(outcomes)} case(s) mismatched")
+                try:
+                    if input_error is not None:
+                        raise input_error
+                    try:
+                        cases = {c["id"]: c for c in json.loads(raw)["cases"]}
+                    except (ValueError, KeyError, TypeError) as exc:
+                        raise FixtureCliError("invalid fixture cases input") from exc
+                    if case_selector == "all":
+                        selected = [cases[cid] for cid in sorted(cases)]
+                    elif case_selector in cases:
+                        selected = [cases[case_selector]]
+                    else:
+                        raise FixtureCliError(
+                            f"unknown fixture case: {case_selector!r}"
+                        )
+                    for case in selected:
+                        result = run_case(case)
+                        problems = compare_case(case, result)
+                        outcomes.append(FixtureCaseOutcome(case["id"], problems))
+                        trace_records.append(
+                            {
+                                "case_id": case["id"],
+                                "ok": not problems,
+                                "problems": problems,
+                                **asdict(result),
+                            }
+                        )
+                    complete = True
+                    if any(not o.ok for o in outcomes):
+                        raise _FixtureMismatch(
+                            f"{sum(not o.ok for o in outcomes)} case(s) mismatched"
+                        )
+                finally:
+                    trace = "".join(
+                        json.dumps(row, sort_keys=True, default=_json_default) + "\n"
+                        for row in trace_records
+                    )
+                    trace_path.write_text(trace, encoding="utf-8")
+                    _write_json(
+                        manifest_path,
+                        {
+                            "schema_version": 2,
+                            "evidence_type": "synthetic_account_fixtures",
+                            "run_id": record.run_id,
+                            "case_selector": case_selector,
+                            "cases": [o.case_id for o in outcomes],
+                            "all_ok": complete and all(o.ok for o in outcomes),
+                            "config_hash": record.config_hash,
+                            "code_hash": record.code_hash,
+                            "data_hash": record.data_hash,
+                            "dependency_lock_hash": record.dependency_lock_hash,
+                            "semantic_trace_hash": hashlib.sha256(
+                                trace.encode()
+                            ).hexdigest(),
+                        },
+                    )
+                    record.artifacts.extend([str(trace_path), str(manifest_path)])
         except _FixtureMismatch:
             pass
-        finally:
-            with trace_path.open("w", encoding="utf-8") as handle:
-                for row in trace_records:
-                    handle.write(json.dumps(row, sort_keys=True, default=_json_default))
-                    handle.write("\n")
-            _write_json(manifest_path, {
-                "schema_version": 1, "run_id": record.run_id, "case_selector": case_selector,
-                "cases": [o.case_id for o in outcomes], "all_ok": all(o.ok for o in outcomes),
-                "config_hash": record.config_hash, "code_hash": record.code_hash,
-            })
-            record.artifacts.extend([str(trace_path), str(manifest_path)])
         return outcomes, trace_path, manifest_path
     finally:
         storage.close()

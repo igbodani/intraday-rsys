@@ -1,5 +1,7 @@
 # M2 implementation handoff for Copilot
 
+**Current-state update (2026-10-29):** this document remains the detailed target specification. Its starting-state descriptions predate the standalone M2 implementation and subsequent repairs. Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md), [M2_IMPLEMENTATION_STATUS.md](M2_IMPLEMENTATION_STATUS.md) and [M2_REPAIR_RESULTS.md](M2_REPAIR_RESULTS.md) before assigning the next ticket; do not rebuild repaired components or claim the full handoff complete.
+
 Date: 2026-10-29. Project: `igbodani/intraday-rsys`.
 
 **Objective:** turn the repaired offline replay foundation into an inspectable synthetic trading-research path: causal observations → features/scanner → strategy proposals → acceptance/reservations → modeled execution → account state → results. Preserve decisions from forming bars as a supported capability, while implementing the existing ORB and VWAP strategies exactly as their completed-bar specifications.

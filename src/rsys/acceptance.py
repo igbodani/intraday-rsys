@@ -5,6 +5,7 @@ Sorts proposals by `(decision_available_at, scanner_rank, instrument_id, strateg
 proposal_id)`, rejects a missing rank with `NO_CURRENT_RANK` instead of inventing rank
 zero, and deduplicates a reused `proposal_id` instead of charging/reserving twice.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -21,8 +22,11 @@ def sort_proposals(proposals: list[Proposal]) -> list[Proposal]:
     return sorted(
         proposals,
         key=lambda p: (
-            p.decision_time_ms, p.scanner_rank if p.scanner_rank is not None else -1,
-            p.symbol, p.strategy_id, p.proposal_id or "",
+            p.decision_time_ms,
+            p.scanner_rank if p.scanner_rank is not None else -1,
+            p.symbol,
+            p.strategy_id,
+            p.proposal_id or "",
         ),
     )
 
@@ -32,17 +36,34 @@ class AcceptanceBook:
 
     def __init__(self) -> None:
         self._seen_ids: set[str] = set()
+        self._sequence = 0
+        self._accepted = {}
+        self._pending_symbols = {}
 
     def accept(
-        self, portfolio: Portfolio, proposal: Proposal, needed_cash: Decimal, *, require_rank: bool = True,
+        self,
+        portfolio: Portfolio,
+        proposal: Proposal,
+        needed_cash: Decimal,
+        *,
+        require_rank: bool = True,
     ) -> AcceptedIntent:
         """Raises AcceptanceError with the declared reason; portfolio state is unchanged on
         any rejection path (rank, duplicate id or insufficient cash)."""
         if require_rank and proposal.scanner_rank is None:
             raise AcceptanceError(NO_CURRENT_RANK)
         if proposal.proposal_id is not None and proposal.proposal_id in self._seen_ids:
+            if self._accepted[proposal.proposal_id] != (proposal, needed_cash):
+                raise ValueError("conflicting proposal identity")
             raise AcceptanceError(DUPLICATE_PROPOSAL)
-        portfolio.reserve(needed_cash)
+        if proposal.symbol in portfolio.positions or portfolio.has_reservation(
+            self._pending_symbols.get(proposal.symbol)
+        ):
+            raise AcceptanceError("DUPLICATE_PENDING_OR_HELD")
+        reservation_id = portfolio.reserve(needed_cash, proposal.proposal_id)
+        self._pending_symbols[proposal.symbol] = reservation_id
+        self._sequence += 1
         if proposal.proposal_id is not None:
             self._seen_ids.add(proposal.proposal_id)
-        return AcceptedIntent(proposal=proposal, reserved_cash=needed_cash)
+            self._accepted[proposal.proposal_id] = (proposal, needed_cash)
+        return AcceptedIntent(proposal, needed_cash, reservation_id, self._sequence)

@@ -1,34 +1,29 @@
-"""End-to-end standalone integration: scanner ranking -> ORB/VWAP strategy proposals ->
-`PhaseEngine`-ordered acceptance -> next-bar-open entry fill -> protective stop/target exits
-(gap and intrabar) and max-hold/flatten timers, using `rsys.portfolio`, `rsys.sizing` and
-`rsys.acceptance` for the account side.
+"""Single-session synthetic bar execution on ReplayRunner's bounded source views.
 
-Honesty note: this proves proposal -> acceptance -> entry-fill -> exit composition across
-the standalone modules built so far. It does NOT model splits, corporate actions or
-subsequent-trade execution (M2-01T); it is not wired into `ReplayRunner` or real market
-data; and it is still a standalone scheduler, not an extension of the existing replay
-runtime -- see docs/M2_IMPLEMENTATION_STATUS.md.
+An open is a modeled execution observation at bar_start, carrying only its price.
+Interval extrema settle at publication; they never enter an earlier decision view.
+This is not a provider adapter or a trade-replay execution implementation.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
 from rsys.acceptance import AcceptanceBook, sort_proposals
+from rsys.calendar import to_exchange_utc
+from rsys.data.events import ProviderBarEvent
+from rsys.money import amount
 from rsys.orders import AcceptedIntent, Proposal
-from rsys.phase_engine import PhaseEngine, PhaseEvent
+from rsys.phase_engine import PhaseEvent
 from rsys.portfolio import AcceptanceError, Portfolio
+from rsys.replay import ReplayProfile
+from rsys.replay_runtime import ReplayRunner
 from rsys.scanner import CandidateInput, rank_candidates
 from rsys.sizing import size_quantity
-
-
-class CompletedBarLike(Protocol):
-    available_at_ms: int
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
+from rsys.strategies.orb import CompletedBar
 
 
 class StrategyLike(Protocol):
@@ -45,9 +40,12 @@ class DecisionRecord:
     proposed: list[str]
     accepted: list[str]
     rejected: dict[str, str]
+    input_versions: tuple[str, ...] = ()
+    ranked: list[str] = field(default_factory=list)
+    excluded: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class FillRecord:
     available_at_ms: int
     symbol: str
@@ -55,6 +53,11 @@ class FillRecord:
     price: Decimal | None = None
     quantity: Decimal | None = None
     target: Decimal | None = None
+    fee: Decimal = Decimal(0)
+    net_pnl: Decimal | None = None
+    reason: str | None = None
+    # An OHLC touch has no exact market timestamp; availability is its bar publication.
+    event_time_ms: int | None = None
 
 
 @dataclass
@@ -65,170 +68,488 @@ class SizingPolicy:
     entry_fee: Decimal = Decimal(0)
     exit_fee: Decimal = Decimal(0)
 
+    def __post_init__(self):
+        for name in (
+            "entry_fee",
+            "exit_fee",
+            "risk_budget",
+            "max_quantity",
+            "quantity_step",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                amount(value, name, positive=name in ("max_quantity", "quantity_step"))
+
 
 @dataclass
 class ExecutionPolicy:
-    """`flatten_at_ms` is an absolute exchange-local ms-of-day; `max_hold_ms` is a duration
-    from each position's own fill time."""
-
     max_hold_ms: int | None = None
     flatten_at_ms: int | None = None
+    decision_latency_ms: int = 0
+
+    def __post_init__(self):
+        for name in ("max_hold_ms", "flatten_at_ms", "decision_latency_ms"):
+            value = getattr(self, name)
+            if value is not None and (
+                type(value) is not int or value < (1 if name == "max_hold_ms" else 0)
+            ):
+                raise ValueError(f"invalid {name}")
+
+
+class IncompleteSessionError(ValueError):
+    """Required execution data is absent or ambiguous; never a successful run."""
 
 
 class StandaloneRunner:
     def __init__(
-        self, strategies: dict[str, StrategyLike], portfolio: Portfolio, sizing: SizingPolicy, *,
-        execution: ExecutionPolicy | None = None, top_n: int = 20,
+        self,
+        strategies: dict[str, StrategyLike],
+        portfolio: Portfolio,
+        sizing: SizingPolicy,
+        *,
+        execution: ExecutionPolicy | None = None,
+        top_n: int = 20,
+        session_date: str = "2024-11-29",
     ):
         self.strategies = strategies
         self.portfolio = portfolio
         self.sizing = sizing
         self.execution = execution or ExecutionPolicy()
         self.top_n = top_n
+        self.origin_ns = (
+            int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
+            * 1_000_000_000
+        )
         self.book = AcceptanceBook()
-        self.latest_bars: dict[str, CompletedBarLike] = {}
         self.pending_intents: dict[str, AcceptedIntent] = {}
         self.entry_times: dict[str, int] = {}
-        self.max_hold_deadlines: dict[str, int] = {}
+        self.exit_due: set[str] = set()
         self.decisions: list[DecisionRecord] = []
         self.fills: list[FillRecord] = []
-        self.engine = PhaseEngine(
-            on_settle=lambda _event: None, on_publish=self._on_publish,
-            on_decision=self._on_decision, on_fill=self._on_fill,
-        )
+        self.trace: list[dict] = []
+        self.contexts = []
+        self._intervals: dict[str, int] = {}
+        self._ran = False
 
-    def run_session(
-        self, bars_by_symbol: dict[str, list[CompletedBarLike]], scanner_inputs: dict[int, dict[str, tuple[Decimal, Decimal]]],
-    ) -> None:
-        """`scanner_inputs[available_at_ms][symbol] = (rvol, gain)`; a symbol with no entry
-        at a given timestamp is excluded from candidacy at that decision, never defaulted."""
-        bars_by_time: dict[int, dict[str, CompletedBarLike]] = {}
-        for symbol, bars in bars_by_symbol.items():
-            for bar in bars:
-                bars_by_time.setdefault(bar.available_at_ms, {})[symbol] = bar
+    def _ns(self, ms):
+        return self.origin_ns + ms * 1_000_000
 
-        for timestamp in sorted(bars_by_time):
-            self.engine.enqueue(PhaseEvent(
-                f"publish-{timestamp}", timestamp, 20, "publish", None, {"bars": bars_by_time[timestamp]},
-            ))
-            self.engine.enqueue(PhaseEvent(f"fill-{timestamp}", timestamp, 70, "fill", None, {}))
-            self.engine.enqueue(PhaseEvent(
-                f"decide-{timestamp}", timestamp, 40, "decision", None,
-                {"scanner": scanner_inputs.get(timestamp, {})},
-            ))
-        self.engine.run()
+    def _ms(self, ns):
+        return (ns - self.origin_ns) // 1_000_000
 
-    def _on_publish(self, event: PhaseEvent) -> None:
-        for symbol, bar in event.payload["bars"].items():
-            self.latest_bars[symbol] = bar
+    def _event(self, identity, ms, phase, kind, symbol=None, payload=None):
+        return PhaseEvent(identity, self._ns(ms), phase, kind, symbol, payload or {})
 
-    def _on_decision(self, event: PhaseEvent, _frozen_view: dict[str, Any]) -> DecisionRecord:
-        scanner_rows = [
-            CandidateInput(symbol, rvol, gain) for symbol, (rvol, gain) in event.payload["scanner"].items()
-        ]
-        scan = rank_candidates(scanner_rows, top_n=self.top_n)
-        rank_by_symbol = {symbol: rank for rank, symbol in enumerate(scan.top, start=1)}
-
-        proposals: list[Proposal] = []
-        for symbol, strategy in self.strategies.items():
-            bar = self.latest_bars.get(symbol)
-            if bar is None or bar.available_at_ms != event.available_at_ns:
-                continue  # no publish for this symbol at this instant
-            proposal = strategy.on_completed_bar(bar, is_candidate=symbol in rank_by_symbol)
-            if proposal is not None:
-                proposals.append(replace(proposal, scanner_rank=rank_by_symbol.get(symbol)))
-
-        accepted, rejected = [], {}
-        for proposal in sort_proposals(proposals):
-            symbol = proposal.symbol
-            try:
-                quantity, _risk = size_quantity(
-                    entry=proposal.signal_price, stop=proposal.stop, entry_fee=self.sizing.entry_fee,
-                    exit_fee=self.sizing.exit_fee, risk_budget=self.sizing.risk_budget,
-                    available_cash=self.portfolio.available_cash, quantity_step=self.sizing.quantity_step,
-                    max_quantity=self.sizing.max_quantity,
+    def run_session(self, bars_by_symbol, scanner_inputs):
+        if self._ran:
+            raise ValueError("a runner is single-session and single-use")
+        self._ran = True
+        sources, domain = [], []
+        opens = {}
+        times = set()
+        for symbol in sorted(bars_by_symbol):
+            previous = None
+            for bar in bars_by_symbol[symbol]:
+                if previous is not None and bar.bar_start_ms <= previous:
+                    raise ValueError("duplicate or unordered bar intervals")
+                previous = bar.bar_start_ms
+                identity = f"{symbol}:{bar.bar_start_ms}"
+                source = ProviderBarEvent(
+                    event_id=identity,
+                    instrument_id=symbol,
+                    provider="synthetic",
+                    feed="fixture",
+                    event_time_ns=self._ns(bar.bar_start_ms),
+                    available_at_ns=self._ns(bar.available_at_ms),
+                    event_time_meaning="provider_market_time",
+                    session_version="nyse-2024-v1",
+                    quality_state="ok",
+                    timing_label="modeled",
+                    interval="1Min",
+                    bar_start_ns=self._ns(bar.bar_start_ms),
+                    bar_end_ns=self._ns(bar.bar_start_ms + 60_000),
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                    adjustment_mode="raw",
                 )
-            except AcceptanceError as exc:
-                rejected[symbol] = exc.reason
-                self.strategies[symbol].on_rejected_or_expired()
-                continue
-            sized = replace(proposal, quantity=quantity)
-            needed_cash = quantity * proposal.signal_price + self.sizing.entry_fee
-            try:
-                intent = self.book.accept(self.portfolio, sized, needed_cash)
-            except AcceptanceError as exc:
-                rejected[symbol] = exc.reason
-                self.strategies[symbol].on_rejected_or_expired()
-                continue
-            self.pending_intents[symbol] = intent
-            accepted.append(symbol)
+                sources.append(source)
+                times.add(bar.available_at_ms)
+                domain.append(
+                    self._event(
+                        f"settle:{identity}",
+                        bar.available_at_ms,
+                        10,
+                        "interval_settle",
+                        symbol,
+                        {"bar": bar},
+                    )
+                )
+                # The open events deliberately contain no close/high/low or future reference.
+                opens.setdefault(bar.bar_start_ms, {})[symbol] = bar.open
+                for phase, kind in ((60, "open_exit"),):
+                    domain.append(
+                        self._event(
+                            f"{kind}:{identity}",
+                            bar.bar_start_ms,
+                            phase,
+                            kind,
+                            symbol,
+                            {"open": bar.open},
+                        )
+                    )
+        for point, prices in sorted(opens.items()):
+            domain.append(
+                self._event(
+                    f"open_entries:{point}",
+                    point,
+                    70,
+                    "open_entries",
+                    payload={"opens": prices},
+                )
+            )
+        for point in sorted(times):
+            domain.append(
+                self._event(
+                    f"decision:{point}",
+                    point,
+                    40,
+                    "decision",
+                    payload={"scanner": scanner_inputs.get(point, {})},
+                )
+            )
+        if self.execution.flatten_at_ms is not None:
+            domain.append(
+                self._event("flatten", self.execution.flatten_at_ms, 30, "flatten")
+            )
+        self.replay = ReplayRunner(sources, ReplayProfile.BAR_V1)
+        self.engine = self.replay.domain_engine(self._dispatch)
+        for event in domain:
+            self.engine.enqueue(event)
+        self.engine.run()
+        if self.exit_due & self.portfolio.positions.keys():
+            raise IncompleteSessionError(
+                "required flatten/max-hold exit has no eligible subsequent open"
+            )
+        if self.pending_intents:
+            raise IncompleteSessionError(
+                "pending intent has no expiry or execution data"
+            )
 
+    def _snapshot(self):
+        p = self.portfolio
+        return {
+            "total_cash": p.total_cash,
+            "spendable_cash": p.spendable_cash,
+            "unsettled_cash": p.unsettled_cash,
+            "reserved_cash": p.reserved_cash,
+            "equity": p.equity({}),
+            "realized_pnl": p.realized_pnl,
+            "positions": {s: asdict(v) for s, v in sorted(p.positions.items())},
+        }
+
+    def _dispatch(self, event):
+        point = self._ms(event.available_at_ns)
+        before = len(self.fills)
+        result = None
+        if event.kind == "replay_source":
+            bar = event.payload["source"]
+            if event.symbol in self.portfolio.positions:
+                self.portfolio.mark_position(event.symbol, bar.close)
+        elif event.kind == "interval_settle":
+            self._settle(event.symbol, event.payload["bar"])
+        elif event.kind == "decision":
+            result = self._decide(event, point)
+        elif event.kind == "accept":
+            result = self._accept(
+                event.payload["proposals"], event.payload["record"], point
+            )
+        elif event.kind == "expiry":
+            intent = self.pending_intents.get(event.symbol)
+            if (
+                intent is not None
+                and intent.reservation_id == event.payload["reservation_id"]
+            ):
+                self._cancel(event.symbol, point, "EXPIRED")
+        elif event.kind == "flatten":
+            self.exit_due.update(self.portfolio.positions)
+            for symbol in list(self.pending_intents):
+                self._cancel(symbol, point, "FLATTEN")
+        elif event.kind == "max_hold":
+            if self.entry_times.get(event.symbol) == event.payload["entry_time"]:
+                self.exit_due.add(event.symbol)
+        elif event.kind == "open_exit":
+            self._open_exit(event.symbol, point, event.payload["open"])
+        elif event.kind == "open_entries":
+            prices = event.payload["opens"]
+            symbols = sorted(
+                prices,
+                key=lambda s: (
+                    self.pending_intents[s].acceptance_sequence
+                    if s in self.pending_intents
+                    else 2**63,
+                    s,
+                ),
+            )
+            for symbol in symbols:
+                self._open_entry(symbol, point, prices[symbol])
+        self.portfolio.assert_invariants()
+        row = {
+            "kind": event.kind,
+            "event_id": event.event_id,
+            "available_at_ns": event.available_at_ns,
+            "phase": event.phase,
+            "available_at_ms": point,
+            "symbol": event.symbol,
+            "account": self._snapshot(),
+        }
+        if event.kind == "decision":
+            row["scanner_inputs"] = event.payload["scanner"]
+        if isinstance(result, DecisionRecord):
+            row.update(asdict(result))
+        self.trace.append(row)
+        for fill in self.fills[before:]:
+            self.trace.append(
+                {
+                    "kind": "fill",
+                    "event_id": event.event_id,
+                    "available_at_ns": event.available_at_ns,
+                    "phase": event.phase,
+                    **asdict(fill),
+                    "account": self._snapshot(),
+                }
+            )
+        return result
+
+    def _decide(self, event, point):
+        context = self.replay.context_after(event.sort_key, intrabar=False)
+        self.contexts.append(context)
+        scan = rank_candidates(
+            [CandidateInput(s, *v) for s, v in event.payload["scanner"].items()],
+            top_n=self.top_n,
+        )
+        ranks = {s: i for i, s in enumerate(scan.top, 1)}
+        proposals = []
+        for symbol, strategy in sorted(self.strategies.items()):
+            bars = context.closed_bars(symbol)
+            if not bars or bars[-1].available_at_ns != event.available_at_ns:
+                continue
+            source = bars[-1]
+            bar = CompletedBar(
+                self._ms(source.bar_start_ns),
+                point,
+                source.open,
+                source.high,
+                source.low,
+                source.close,
+                source.volume,
+            )
+            proposal = strategy.on_completed_bar(bar, is_candidate=symbol in ranks)
+            if proposal is not None:
+                proposals.append(
+                    replace(
+                        proposal,
+                        scanner_rank=ranks.get(symbol),
+                        decision_latency_ms=self.execution.decision_latency_ms,
+                    )
+                )
         record = DecisionRecord(
-            available_at_ms=event.available_at_ns, candidates=list(scan.top),
-            proposed=[p.symbol for p in proposals], accepted=accepted, rejected=rejected,
+            point,
+            list(scan.top),
+            [p.symbol for p in proposals],
+            [],
+            {},
+            context.input_references(),
+            list(scan.ranked),
+            dict(scan.excluded),
         )
         self.decisions.append(record)
+        if proposals:
+            # The acceptance callback owns a copied record; update the public decision there.
+            self.engine.enqueue(
+                self._event(
+                    f"accept:{point}",
+                    point,
+                    50,
+                    "accept",
+                    payload={"proposals": proposals, "record": record},
+                )
+            )
         return record
 
-    def _check_exit(self, symbol: str, position: Any, bar: CompletedBarLike) -> Decimal | None:
-        """Scheduled flatten/max-hold exits first, then protective gap exits, then intrabar
-        touches; stop wins over target when both are touched in the same bar."""
-        flatten_at = self.execution.flatten_at_ms
-        if flatten_at is not None and bar.available_at_ms >= flatten_at:
-            return bar.open
-        max_hold_at = self.max_hold_deadlines.get(symbol)
-        if max_hold_at is not None and bar.available_at_ms >= max_hold_at:
-            return bar.open
-        if position.stop is not None and bar.open <= position.stop:
-            return bar.open
-        if position.target is not None and bar.open >= position.target:
-            return position.target
-        if position.stop is not None and bar.low <= position.stop:
-            return position.stop
-        if position.target is not None and bar.high >= position.target:
-            return position.target
-        return None
-
-    def _on_fill(self, _event: PhaseEvent) -> list[FillRecord]:
-        results = []
-        for symbol, position in list(self.portfolio.positions.items()):
-            bar = self.latest_bars.get(symbol)
-            if bar is None or bar.available_at_ms <= self.entry_times.get(symbol, -1):
-                continue  # never exit on the bar that created the position
-            exit_price = self._check_exit(symbol, position, bar)
-            if exit_price is None:
-                continue
-            quantity = position.quantity
-            self.portfolio.sell(symbol, exit_price, self.sizing.exit_fee)
-            self.strategies[symbol].on_position_closed()
-            del self.entry_times[symbol]
-            self.max_hold_deadlines.pop(symbol, None)
-            record = FillRecord(bar.available_at_ms, symbol, "EXIT", exit_price, quantity)
-            self.fills.append(record)
-            results.append(record)
-
-        for symbol in list(self.pending_intents):
-            intent = self.pending_intents[symbol]
-            proposal = intent.proposal
-            bar = self.latest_bars.get(symbol)
-            if bar is None or bar.available_at_ms <= proposal.decision_time_ms:
-                continue  # no eligible later open yet: never fill at the signal's own bar
-            del self.pending_intents[symbol]
-            if bar.open <= proposal.stop:
-                self.portfolio.release_reservation(intent.reserved_cash)
-                self.strategies[symbol].on_rejected_or_expired()
-                record = FillRecord(bar.available_at_ms, symbol, "ENTRY_THROUGH_STOP")
-            else:
-                self.portfolio.buy(
-                    symbol, proposal.quantity, bar.open, self.sizing.entry_fee, intent.reserved_cash,
-                    proposal.stop, proposal.target,
+    def _accept(self, proposals, record, point):
+        for p in sort_proposals(proposals):
+            try:
+                if (
+                    self.execution.flatten_at_ms is not None
+                    and point >= self.execution.flatten_at_ms
+                ):
+                    raise AcceptanceError("ENTRY_WINDOW_CLOSED")
+                if p.symbol in self.pending_intents:
+                    raise AcceptanceError("DUPLICATE_PENDING_OR_HELD")
+                qty, _ = self._quantity(
+                    p,
+                    p.signal_price,
+                    self.portfolio.available_cash,
+                    self.sizing.max_quantity,
                 )
-                target = self.strategies[symbol].on_filled(bar.open)
+                p = replace(p, quantity=qty)
+                intent = self.book.accept(
+                    self.portfolio, p, qty * p.signal_price + self.sizing.entry_fee
+                )
+            except AcceptanceError as exc:
+                record.rejected[p.symbol] = exc.reason
+                self.strategies[p.symbol].on_rejected_or_expired()
+                continue
+            self.pending_intents[p.symbol] = intent
+            record.accepted.append(p.symbol)
+            if p.expires_at_ms is not None:
+                self.engine.enqueue(
+                    self._event(
+                        f"expiry:{intent.reservation_id}",
+                        p.expires_at_ms,
+                        30,
+                        "expiry",
+                        p.symbol,
+                        {"reservation_id": intent.reservation_id},
+                    )
+                )
+        self.decisions[-1] = record
+        return record
+
+    def _quantity(self, p, price, cash, maximum):
+        return size_quantity(
+            entry=price,
+            stop=p.stop,
+            entry_fee=self.sizing.entry_fee,
+            exit_fee=self.sizing.exit_fee,
+            risk_budget=self.sizing.risk_budget,
+            available_cash=cash,
+            quantity_step=self.sizing.quantity_step,
+            max_quantity=maximum,
+        )
+
+    def _cancel(self, symbol, point, reason):
+        intent = self.pending_intents.pop(symbol)
+        self.portfolio.release_reservation(intent.reserved_cash, intent.reservation_id)
+        self.strategies[symbol].on_rejected_or_expired()
+        self.fills.append(FillRecord(point, symbol, reason, reason=reason))
+
+    def _open_entry(self, symbol, point, price):
+        intent = self.pending_intents.get(symbol)
+        if intent is not None:
+            p = intent.proposal
+            if point < p.ready_at_ms:
+                return
+            if p.expires_at_ms is not None and point >= p.expires_at_ms:
+                self._cancel(symbol, point, "EXPIRED")
+            elif price <= p.stop:
+                self._cancel(symbol, point, "ENTRY_THROUGH_STOP")
+            else:
+                try:
+                    qty, _ = self._quantity(
+                        p,
+                        price,
+                        self.portfolio.available_cash + intent.reserved_cash,
+                        p.quantity,
+                    )
+                except AcceptanceError as exc:
+                    self._cancel(symbol, point, exc.reason)
+                    return
+                self.portfolio.buy(
+                    symbol,
+                    qty,
+                    price,
+                    self.sizing.entry_fee,
+                    intent.reserved_cash,
+                    p.stop,
+                    None,
+                    reservation_id=intent.reservation_id,
+                    transaction_id=f"entry:{intent.reservation_id}",
+                )
+                target = self.strategies[symbol].on_filled(price)
                 self.portfolio.positions[symbol].target = target
-                self.entry_times[symbol] = bar.available_at_ms
+                del self.pending_intents[symbol]
+                self.entry_times[symbol] = point
+                self.fills.append(
+                    FillRecord(
+                        point,
+                        symbol,
+                        "FILLED",
+                        price,
+                        qty,
+                        target,
+                        self.sizing.entry_fee,
+                        event_time_ms=point,
+                    )
+                )
                 if self.execution.max_hold_ms is not None:
-                    self.max_hold_deadlines[symbol] = bar.available_at_ms + self.execution.max_hold_ms
-                record = FillRecord(bar.available_at_ms, symbol, "FILLED", bar.open, proposal.quantity, target)
-            self.fills.append(record)
-            results.append(record)
-        return results
+                    self.engine.enqueue(
+                        self._event(
+                            f"hold:{symbol}:{point}",
+                            point + self.execution.max_hold_ms,
+                            30,
+                            "max_hold",
+                            symbol,
+                            {"entry_time": point},
+                        )
+                    )
+        if symbol in self.portfolio.positions:
+            self._intervals[symbol] = point
+
+    def _exit(self, symbol, point, price, reason, *, event_time=None):
+        pos = self.portfolio.positions[symbol]
+        qty = pos.quantity
+        pnl = price * qty - self.sizing.exit_fee - pos.basis
+        self.portfolio.sell(
+            symbol,
+            price,
+            self.sizing.exit_fee,
+            transaction_id=f"exit:{symbol}:{self.entry_times[symbol]}",
+        )
+        self.strategies[symbol].on_position_closed()
+        self.entry_times.pop(symbol)
+        self.exit_due.discard(symbol)
+        self._intervals.pop(symbol, None)
+        self.fills.append(
+            FillRecord(
+                point,
+                symbol,
+                "EXIT",
+                price,
+                qty,
+                fee=self.sizing.exit_fee,
+                net_pnl=pnl,
+                reason=reason,
+                event_time_ms=event_time,
+            )
+        )
+
+    def _open_exit(self, symbol, point, price):
+        pos = self.portfolio.positions.get(symbol)
+        if pos is None:
+            return
+        if symbol in self._intervals:
+            raise IncompleteSessionError(
+                "overlapping unpublished position intervals are unsupported"
+            )
+        if symbol in self.exit_due:
+            self._exit(symbol, point, price, "TIMER", event_time=point)
+        elif pos.stop is not None and price <= pos.stop:
+            self._exit(symbol, point, price, "STOP_GAP", event_time=point)
+        elif pos.target is not None and price >= pos.target:
+            self._exit(symbol, point, pos.target, "TARGET_GAP", event_time=point)
+
+    def _settle(self, symbol, bar):
+        if self._intervals.get(symbol) != bar.bar_start_ms:
+            return
+        self._intervals.pop(symbol)
+        pos = self.portfolio.positions.get(symbol)
+        if pos is None:
+            return
+        if pos.stop is not None and bar.low <= pos.stop:
+            self._exit(symbol, bar.available_at_ms, pos.stop, "STOP_TOUCH")
+        elif pos.target is not None and bar.high >= pos.target:
+            self._exit(symbol, bar.available_at_ms, pos.target, "TARGET_TOUCH")

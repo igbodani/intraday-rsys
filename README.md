@@ -10,7 +10,9 @@ Offline, synthetic-first implementation of the intraday research system governed
 - Replay: availability-ordered events, internally scheduled minute closures, immutable historical contexts, trade-built forming/closed/revised bars, optional quote state and an offline parity comparator.
 - Observations: completed-bar callbacks on new completed publications; separately opted-in intrabar callbacks after each availability batch. Two named synthetic observers can run through the CLI and record the versions they read, including evaluations that produce no decision.
 
-The latest repair and verification record is [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md). It supersedes older R3 completion claims: passing the earlier 381-test suite did not establish the delayed-event and historical-visibility guarantees.
+- Synthetic account sessions: scanner ranking, ORB/VWAP, owned cash reservations, fill-time sizing, entry-interval protection, independent timers, net metrics, guarded comparison and portable reports. The bar session runner now uses ReplayRunner-backed source views and the shared phase clock.
+
+Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md) for the module/test inventory and Copilot work order. [M2_REPAIR_RESULTS.md](docs/M2_REPAIR_RESULTS.md) records the current repairs; [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md) remains the earlier data-replay repair record.
 
 ## Run locally
 
@@ -24,11 +26,14 @@ uv run rsys replay --config configs/replay_bar_fixture.yaml --out auto
 uv run rsys replay --config configs/replay_trade_fixture.yaml --out auto
 uv run rsys replay --config configs/replay_intrabar_observer_fixture.yaml --out auto
 uv run rsys replay --config configs/replay_closed_observer_fixture.yaml --out auto
+uv run rsys fixture --case all --out runs/fixture
+uv run rsys run --config fixtures/standalone_run_fixture.json --out runs/orb --report
+uv run rsys run --config fixtures/standalone_vwap_fixture.json --out runs/vwap --report
 uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **426 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The verified suite contains **622 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 
@@ -40,8 +45,8 @@ Late trades, corrections and actions may change later observations. They cannot 
 
 Quote freshness is measured from availability at the decision clock under the declared synthetic policy. Stale, invalid, crossed, locked or one-sided quotes are unavailable through `latest_quote()`; diagnostic state remains accessible. Quotes never contribute trade volume or create trade bars. No real feed policy or entitlement has been verified.
 
-## Next ticket
+## Current limits and next ticket
 
-M2-01: Decimal ledger, sizing/reservations and conservative execution against F01–F17, followed by the separately specified trade-event adapter. Scanner and ORB/VWAP implementations follow their tickets. ORB/VWAP baseline specifications remain completed-bar strategies; forming-bar variants require their own declared rules and experiments.
+The account/session layer is a repaired synthetic subset of M2. Next, consolidate the fill/account contract and integrate the subsequent-trade adapter through ReplayRunner, acceptance, risk checks and the ledger. Historical scanner RVOL, multi-session composition and a complete data-loader holdout boundary remain unfinished. The detailed ordered tasks and acceptance tests are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
 
-`fixture`, `run`, `compare` and `final-evaluate` remain CLI stubs. There are no implemented strategies, fills, positions, P&L, optimizer or holdout evaluation yet. D09–D13, D16–D17 and provider-facing D22 dependencies remain unresolved. Synthetic tests establish software behavior for the tested cases, not market realism or profitability.
+`fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts only its strict synthetic bar schema. A run with no required flatten may retain open positions as a finite-input diagnostic; a missing required exit is incomplete. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09–D13, D16–D17 and provider-facing D22 remain unresolved.

@@ -87,7 +87,7 @@ def test_insufficient_cash_rejection_releases_reservation_and_rearms_the_strateg
 
 def test_entry_through_stop_releases_reservation_without_a_position():
     gapped_bar = dict(_NEXT_OPEN_BAR)
-    gapped_bar["open"] = "90"  # below the 99.00 stop
+    gapped_bar.update(open="90", low="90")  # below the 99.00 stop
     runner, session = _build_runner()
     session["bars"]["AAA"] = [_bar(raw) for raw in _S01["bars"]] + [_bar(gapped_bar)]
     runner.run_session(session["bars"], session["scanner"])
@@ -150,12 +150,15 @@ def test_max_hold_timer_flattens_after_the_scheduled_duration():
 
 def test_flatten_timer_closes_the_position_independent_of_protection():
     followup = _followup_bar("2024-11-29T09:48:00")
-    runner = _run_to_fill_then([followup], execution=ExecutionPolicy(flatten_at_ms=_ms("2024-11-29T09:48:00")))
+    at_timer = _followup_bar("2024-11-29T09:49:00", bar_start="2024-11-29T09:48:00",
+                             open="103", high="103", low="103", close="103")
+    runner = _run_to_fill_then([followup, at_timer], execution=ExecutionPolicy(flatten_at_ms=_ms("2024-11-29T09:48:00")))
     exit_record = next(f for f in runner.fills if f.symbol == "AAA" and f.status == "EXIT")
-    assert exit_record.price == Decimal(102)
+    assert exit_record.price == Decimal(103)
+    assert exit_record.available_at_ms == _ms("2024-11-29T09:48:00")
 
 
-def test_no_exit_fires_on_the_entry_bar_itself():
+def test_untouched_entry_interval_keeps_the_position_open():
     runner, session = _build_runner()
     runner.run_session(session["bars"], session["scanner"])
     assert not any(f.symbol == "AAA" and f.status == "EXIT" for f in runner.fills)

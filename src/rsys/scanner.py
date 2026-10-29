@@ -6,6 +6,7 @@ eligibility audit require calendar-aware historical data loading that remains ou
 for this pass -- see docs/M2_IMPLEMENTATION_STATUS.md. Callers supply already-computed
 `rvol`/`gain` per symbol for one decision snapshot.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -34,6 +35,21 @@ class ScanResult:
 def rank_candidates(inputs: list[CandidateInput], *, top_n: int) -> ScanResult:
     """Rank descending by RVOL, then descending by gain, then ascending symbol; take
     `top_n`. Missing required inputs are excluded with a reason, never defaulted to zero."""
+    if type(top_n) is not int or top_n < 1:
+        raise ValueError("top_n must be a positive integer")
+    seen = set()
+    for row in inputs:
+        if not row.symbol or row.symbol in seen:
+            raise ValueError("scanner symbols must be unique and nonblank")
+        seen.add(row.symbol)
+        for name in ("rvol", "gain"):
+            value = getattr(row, name)
+            if value is not None and (
+                not isinstance(value, Decimal)
+                or not value.is_finite()
+                or (name == "rvol" and value < 0)
+            ):
+                raise ValueError("invalid scanner score")
     excluded: dict[str, str] = {}
     eligible: list[CandidateInput] = []
     for row in inputs:

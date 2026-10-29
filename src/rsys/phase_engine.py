@@ -1,27 +1,24 @@
-"""Standalone phase-ordering scheduler proving docs/contracts.md's declared phase table
-(10..80) and the ordering invariants from docs/M2_IMPLEMENTATION_HANDOFF.md step 1
-(M2-01a): same-time batching, frozen decision views, settlement-before-decision, a closed
-phase rejecting a derived event, and idempotent/conflicting event redelivery.
+"""Domain phase dispatch using the replay runtime's full nanosecond ordering key.
 
-Honesty note: this is a new, self-contained scheduler built on top of the already-tested
-`rsys.acceptance`/`rsys.portfolio` modules. It does NOT extend `ReplayRunner`/`SeriesRouter`
-and shares no code or state with the existing data-only replay runtime in
-`replay_runtime.py`. It demonstrates the ordering contract in isolation; wiring F01-F17 and
-a real multi-symbol data feed through it remains future work -- see
-docs/M2_IMPLEMENTATION_STATUS.md.
+ReplayRunner attaches its source dispatch to this queue for synthetic execution.
+Legacy callbacks remain useful for isolated account fixtures and scheduler tests.
 """
+
 from __future__ import annotations
 
-from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
-PHASES = (10, 20, 25, 26, 30, 40, 50, 60, 70, 80)
+from rsys.data.keys import ReplayKey
+from rsys.replay import Phase
+
+PHASES = tuple(int(p) for p in Phase)
 
 
-class PhaseOrderError(Exception):
-    """A derived event targeted a (timestamp, phase) slot that is already closed, or was
-    redelivered under the same event_id with a conflicting payload."""
+class PhaseOrderError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -32,10 +29,25 @@ class PhaseEvent:
     kind: str
     symbol: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    sequence: int = -1
+    tie: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if (
+            self.phase not in PHASES
+            or type(self.available_at_ns) is not int
+            or self.available_at_ns < 0
+        ):
+            raise PhaseOrderError("unsupported phase or invalid timestamp")
 
     @property
-    def sort_key(self) -> tuple[int, int, str]:
-        return (self.available_at_ns, self.phase, self.event_id)
+    def sort_key(self):
+        return ReplayKey(
+            self.available_at_ns,
+            self.phase,
+            self.sequence,
+            self.tie or (self.event_id,),
+        )
 
 
 @dataclass
@@ -48,69 +60,92 @@ class DispatchRecord:
     result: Any
 
 
+def _freeze(value):
+    if isinstance(value, dict):
+        return MappingProxyType({k: _freeze(v) for k, v in value.items()})
+    if isinstance(value, (tuple, list)):
+        return tuple(_freeze(v) for v in value)
+    return deepcopy(value)
+
+
 class PhaseEngine:
-    """Drains enqueued events in strict `(available_at_ns, phase, event_id)` order. The
-    caller supplies one callback per handled phase; this module only enforces ordering,
-    same-time batching (via the frozen view passed into `on_decision`), idempotency and the
-    closed-phase invariant -- it carries no market-data or ledger logic of its own."""
-
     def __init__(
-        self, *,
-        on_settle: Callable[[PhaseEvent], Any],
-        on_publish: Callable[[PhaseEvent], Any],
-        on_decision: Callable[[PhaseEvent, dict[str, Any]], Any],
-        on_fill: Callable[[PhaseEvent], Any],
+        self,
+        *,
+        on_settle=None,
+        on_publish=None,
+        on_decision=None,
+        on_fill=None,
+        on_dispatch=None,
     ):
-        self._queue: list[PhaseEvent] = []
-        self._dispatched_ids: set[str] = set()
-        self._applied_payloads: dict[str, dict[str, Any]] = {}
-        self._high_water: tuple[int, int] = (-1, -1)
-        self.closes: dict[str, Any] = {}
-        self.transitions: list[DispatchRecord] = []
-        self._on_settle = on_settle
-        self._on_publish = on_publish
-        self._on_decision = on_decision
-        self._on_fill = on_fill
+        self._queue = []
+        self._applied = {}
+        self._high_water = None
+        self._running = False
+        self.closes = {}
+        self.transitions = []
+        self._handlers = {
+            10: on_settle,
+            20: on_publish,
+            40: on_decision,
+            60: on_fill,
+            70: on_fill,
+        }
+        self._on_dispatch = on_dispatch
 
-    def enqueue(self, event: PhaseEvent) -> None:
-        key = (event.available_at_ns, event.phase)
-        if key < self._high_water:
+    def enqueue(self, event):
+        if (
+            event.event_id not in self._applied
+            and self._high_water is not None
+            and (event.available_at_ns, event.phase)
+            <= (self._high_water.available_at_ns, self._high_water.phase)
+        ):
             raise PhaseOrderError(
-                f"event {event.event_id!r} targets ({event.available_at_ns}, phase {event.phase}), "
-                f"already closed at {self._high_water}"
+                "derived event targets an already completed key/phase"
             )
-        self._queue.append(event)
+        self._queue.append(deepcopy(event))
 
-    def run(self) -> None:
-        while self._queue:
-            self._queue.sort(key=lambda e: e.sort_key)
-            event = self._queue.pop(0)
-            self._high_water = (event.available_at_ns, event.phase)
-            self._dispatch(event)
-
-    def _dispatch(self, event: PhaseEvent) -> None:
-        if event.event_id in self._dispatched_ids:
-            previous = self._applied_payloads.get(event.event_id)
-            if previous is not None and previous != event.payload:
-                raise PhaseOrderError(f"event {event.event_id!r} redelivered with a conflicting payload")
-            return  # identical redelivery: idempotent no-op, never a second effect
-        self._dispatched_ids.add(event.event_id)
-        self._applied_payloads[event.event_id] = event.payload
-
-        if event.phase == 10:
-            result = self._on_settle(event)
-        elif event.phase == 20:
-            result = self._on_publish(event)
-            if event.symbol is not None and "close" in event.payload:
-                self.closes[event.symbol] = event.payload["close"]
-        elif event.phase == 40:
-            frozen_view = dict(self.closes)  # a copy: no later mutation can leak backward into it
-            result = self._on_decision(event, frozen_view)
-        elif event.phase in (60, 70):
-            result = self._on_fill(event)
-        else:
-            result = None
-        self.transitions.append(DispatchRecord(
-            event_id=event.event_id, available_at_ns=event.available_at_ns, phase=event.phase,
-            kind=event.kind, symbol=event.symbol, result=result,
-        ))
+    def run(self):
+        self._running = True
+        try:
+            while self._queue:
+                self._queue.sort(key=lambda e: e.sort_key)
+                event = self._queue.pop(0)
+                if event.event_id in self._applied:
+                    if self._applied[event.event_id] != event:
+                        raise PhaseOrderError("conflicting event identity or payload")
+                    continue
+                if self._high_water is not None and event.sort_key < self._high_water:
+                    raise PhaseOrderError("event would rewind replay")
+                self._high_water = event.sort_key
+                original = deepcopy(event)
+                if self._on_dispatch is not None:
+                    result = self._on_dispatch(event)
+                else:
+                    handler = self._handlers.get(event.phase)
+                    result = (
+                        handler(event, _freeze(self.closes))
+                        if event.phase == 40 and handler
+                        else handler(event)
+                        if handler
+                        else None
+                    )
+                if (
+                    event.phase == 20
+                    and event.symbol is not None
+                    and "close" in event.payload
+                ):
+                    self.closes[event.symbol] = deepcopy(event.payload["close"])
+                self._applied[event.event_id] = original
+                self.transitions.append(
+                    DispatchRecord(
+                        event.event_id,
+                        event.available_at_ns,
+                        event.phase,
+                        event.kind,
+                        event.symbol,
+                        deepcopy(result),
+                    )
+                )
+        finally:
+            self._running = False

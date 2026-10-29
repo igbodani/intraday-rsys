@@ -1,5 +1,4 @@
-"""CLI entry point. `validate` (M0) and `replay` (R3-C) are implemented; other subcommands
-from docs/contracts.md are registered but not yet built (later tickets)."""
+"""Offline validation, replay, synthetic sessions, fixtures and evidence comparison."""
 from __future__ import annotations
 
 import argparse
@@ -16,8 +15,8 @@ from rsys.replay_io import (
     UnsupportedRuleSetError,
     run_replay_from_config,
 )
-from rsys.report import ReportError, render_report_for_attempt
 from rsys.run_cli import RunConfigError, run_cli_entry
+from rsys.standalone_run import IncompleteSessionError
 
 EXIT_SUCCESS = 0
 EXIT_OTHER_FAILURE = 1
@@ -26,6 +25,11 @@ EXIT_DATA_ERROR = 3
 EXIT_INVARIANT_FAILURE = 4
 
 _NOT_IMPLEMENTED = ("final-evaluate",)
+
+
+def _blocked_final_evaluate():
+    print("blocked: final evaluation requires resolved research decisions, a frozen specification, and holdout authorization", file=sys.stderr)
+    return 5
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -116,14 +120,19 @@ def _cmd_fixture(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Runs a synthetic, standalone ORB/VWAP session (StandaloneRunner) -- NOT the real
-    ReplayRunner/market-data path; see docs/M2_IMPLEMENTATION_STATUS.md."""
+    """Runs the synthetic bar session on ReplayRunner; no real provider integration."""
     out_dir = Path("runs") / "run" if args.out == "auto" else Path(args.out)
     try:
-        summary, run_id, trace_path, manifest_path = run_cli_entry(args.config, out_dir)
+        summary, run_id, trace_path, manifest_path = run_cli_entry(args.config, out_dir, report=args.report)
     except RunConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INVALID_CONFIG
+    except IncompleteSessionError as exc:
+        print(f"incomplete: {exc}; inspect retained attempt", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except ValueError as exc:
+        print(f"error: run invariant failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
+        return EXIT_INVARIANT_FAILURE
     except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
         print(f"error: run failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
         return EXIT_OTHER_FAILURE
@@ -135,12 +144,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(f"starting_equity: {summary['starting_equity']}")
     print(f"ending_equity: {summary['ending_equity']}")
     if args.report:
-        try:
-            report_path = render_report_for_attempt(trace_path.parent)
-        except ReportError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return EXIT_DATA_ERROR
-        print(f"report: {report_path}")
+        print(f"report: {trace_path.parent / 'report.html'}")
     return EXIT_SUCCESS
 
 
@@ -202,8 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     compare.set_defaults(func=_cmd_compare)
 
     for name in _NOT_IMPLEMENTED:
-        stub = subparsers.add_parser(name, help="Not implemented yet (later ticket)")
-        stub.set_defaults(func=lambda _args, _name=name: _not_implemented(_name))
+        stub = subparsers.add_parser(name, help="Blocked until final-evaluation requirements are resolved")
+        stub.set_defaults(func=lambda _args: _blocked_final_evaluate())
 
     return parser
 

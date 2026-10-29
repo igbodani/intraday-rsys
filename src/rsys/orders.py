@@ -1,14 +1,18 @@
-"""Typed, immutable domain records for the M2-01 account/execution slice (proposals, accepted
-intents, fills and positions). These are the smallest records needed to make F01-F17 traceable
-through real code; broader phase-aware engine contracts (M2-01a) remain future work -- see
-docs/M2_IMPLEMENTATION_STATUS.md.
+"""Typed domain records for proposals, owned intents, positions, fills and checkpoints.
+
+Positions are mutable inside the account; proposal/intent/fill records are immutable.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-RejectionReason = str  # one of the string constants below; kept as str for easy JSON round-trip.
+from rsys.money import amount
+
+RejectionReason = (
+    str  # one of the string constants below; kept as str for easy JSON round-trip.
+)
 
 INVALID_STOP_DISTANCE = "INVALID_STOP_DISTANCE"
 INSUFFICIENT_CASH = "INSUFFICIENT_CASH"
@@ -35,13 +39,35 @@ class Proposal:
     expiry_ms: int | None = None
     max_hold_ms: int | None = None
 
+    def __post_init__(self):
+        amount(self.quantity, "proposal quantity")
+        amount(self.signal_price, "signal price", positive=True)
+        for name in ("stop", "target"):
+            if getattr(self, name) is not None:
+                amount(getattr(self, name), name, positive=True)
+        for name in (
+            "decision_time_ms",
+            "decision_latency_ms",
+            "expiry_ms",
+            "max_hold_ms",
+        ):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if self.scanner_rank is not None and (
+            type(self.scanner_rank) is not int or self.scanner_rank < 1
+        ):
+            raise ValueError("scanner rank must be positive")
+
     @property
     def ready_at_ms(self) -> int:
         return self.decision_time_ms + self.decision_latency_ms
 
     @property
     def expires_at_ms(self) -> int | None:
-        return None if self.expiry_ms is None else self.decision_time_ms + self.expiry_ms
+        return (
+            None if self.expiry_ms is None else self.decision_time_ms + self.expiry_ms
+        )
 
 
 @dataclass(frozen=True)
@@ -50,6 +76,8 @@ class AcceptedIntent:
 
     proposal: Proposal
     reserved_cash: Decimal
+    reservation_id: str | None = None
+    acceptance_sequence: int = 0
 
 
 @dataclass
