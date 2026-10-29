@@ -60,22 +60,22 @@ IDs are stable. Test paths/names are implementation targets; they have not been 
 
 ## Replay and trade-driven bar requirements
 
-Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). `REPLAY-001`, `REPLAY-002` and `REPLAY-004` are implemented (R1); the `BAR-*` and `QUOTE-*` rows and the forming-bar/quote half of `REPLAY-003`/`REPLAY-005` remain future-ticket targets (R2/R3), not current behavior.
+Registered per `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` section 8 (P0 ticket-scope reconciliation). `REPLAY-001`, `REPLAY-002`, `REPLAY-004` (R1) and `BAR-001`..`BAR-010`/`BAR-012` (R2) are implemented; `BAR-011`, `QUOTE-*`, `REPLAY-005`, and the forming-bar/quote half of `REPLAY-003` remain future-ticket targets (R3), not current behavior.
 
 | ID | Requirement | Acceptance test / fixture | Ticket |
 |---|---|---|---|
-| BAR-001 | The prefix after T1 contains no T2/T3/T4 information | `test_bar_builder.py` | R2 |
-| BAR-002 | Boundary trades belong to the next half-open interval; nanosecond precision is preserved | `test_bar_builder.py` | R2 |
-| BAR-003 | Field eligibility and combined-condition precedence match the pinned adapter; unknown conditions are explicit | `test_bar_rules.py` | R2 |
-| BAR-004 | Volume-only contributors do not contaminate OHLC or the separate VWAP accumulator | `test_bar_rules.py` | R2 |
-| BAR-005 | Identical trade delivery is idempotent; conflicting identity is rejected or handled as an explicit correction | `test_bar_builder.py` | R2 |
-| BAR-006 | Late arrival creates a current-time revision of the correct past bucket | `test_bar_revisions.py` | R2 |
-| BAR-007 | Corrections/cancels recompute affected extrema/open/close/statistics; unresolved original references block evidence | `test_bar_revisions.py` | R2 |
-| BAR-008 | No-trade, missing-data, and no-eligible-price states stay distinct; no fabricated flat bars | `test_bar_builder.py` | R2 |
-| BAR-009 | Timer closes a quiet bucket without waiting for another trade; incomplete EOF is visible | `test_bar_builder.py` | R2 |
-| BAR-010 | Old snapshots cannot mutate after a new arrival, correction, or split | `test_bar_revisions.py` | R2 |
+| BAR-001 | The prefix after T1 contains no T2/T3/T4 information | `test_worked_example_full_sequence` | R2 |
+| BAR-002 | Boundary trades belong to the next half-open interval; nanosecond precision is preserved | `test_boundary_trade_belongs_to_the_next_bucket`, `test_nanosecond_precision_is_preserved_in_bucket_assignment` | R2 |
+| BAR-003 | Field eligibility and combined-condition precedence match the pinned adapter; unknown conditions are explicit | `test_unknown_condition_is_an_explicit_error`, `test_combined_conditions_use_the_most_restrictive_eligibility` | R2 |
+| BAR-004 | Volume-only contributors do not contaminate OHLC or the separate VWAP accumulator | `test_volume_only_condition_restricts_price_and_vwap`, `test_worked_example_full_sequence` | R2 |
+| BAR-005 | Identical trade delivery is idempotent; conflicting identity is rejected or handled as an explicit correction | `test_identical_redelivery_is_idempotent`, `test_conflicting_redelivery_without_a_correction_is_rejected` | R2 |
+| BAR-006 | Late arrival creates a current-time revision of the correct past bucket | `test_worked_example_full_sequence` (T5 late arrival) | R2 |
+| BAR-007 | Corrections/cancels recompute affected extrema/open/close/statistics; unresolved original references block evidence | `test_worked_example_full_sequence` (cancels), `test_correction_referencing_an_unknown_trade_id_is_rejected` | R2 |
+| BAR-008 | No-trade, missing-data, and no-eligible-price states stay distinct; no fabricated flat bars | `test_volume_only_only_bucket_has_no_eligible_price`, `test_empty_bucket_snapshot_has_no_trades_and_no_price` | R2 |
+| BAR-009 | Timer closes a quiet bucket without waiting for another trade; incomplete EOF is visible | `test_timer_closes_a_bucket_with_no_recent_trade` | R2 |
+| BAR-010 | Old snapshots cannot mutate after a new arrival, correction, or split | `test_previously_returned_snapshot_is_unaffected_by_a_later_correction`, `test_bar_snapshot_is_frozen` | R2 |
 | BAR-011 | Source and feed changes cannot double-count or mix bar histories | `test_provider_bar_parity.py` | R3 |
-| BAR-012 | Unsupported split/unit overlap blocks the affected interval | `test_bar_revisions.py` | R2 |
+| BAR-012 | Unsupported split/unit overlap blocks the affected interval | `test_bucket_straddling_a_split_dispatch_is_blocked`, `test_bucket_not_overlapping_a_split_dispatch_is_not_blocked` | R2 |
 | REPLAY-001 | Randomly permuted files/pages yield the same output when event identities/order metadata are unchanged | `test_replay_order_is_independent_of_input_list_order` | R1 |
 | REPLAY-002 | Perturbing unavailable future trades, quotes, revisions, or actions cannot change earlier outputs | `test_future_perturbation_does_not_change_the_honest_decision_through_cutoff`, `test_future_perturbation_harness_catches_a_deliberately_leaky_double` | R1 |
 | REPLAY-003 | Close-only strategies do not receive forming values; opted-in intrabar strategies receive only current snapshots | `test_closed_only_context_has_no_forming_or_trade_access`, `test_intrabar_context_still_has_closed_bars_and_a_bounded_latest_trade`, `test_intrabar_context_forming_bar_is_explicitly_not_yet_implemented` | R1 (forming-bar population itself: R2/R3) |

@@ -1,0 +1,199 @@
+"""Encodes the synthetic worked example from
+docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md section 8 (09:30-09:31 bucket,
+2024-06-10). Timestamps are used directly as UTC for test simplicity; the
+plan's note to convert America/New_York to UTC in stored fixtures does not
+change any of the arithmetic below."""
+from decimal import Decimal
+
+import pytest
+
+from rsys.data.bar_builder import (
+    BarSnapshot,
+    ConflictingTradeError,
+    SnapshotStatus,
+    TradeBarBuilder,
+    UnresolvedCorrectionError,
+)
+from rsys.data.bar_rules import FixtureBarRuleSet
+from rsys.data.events import (
+    EventTimeMeaning,
+    QualityState,
+    TimingLabel,
+    TradeCorrectionEvent,
+    TradeEvent,
+)
+from rsys.data.timestamps import parse_utc_timestamp_ns
+
+_COMMON = {
+    "provider": "alpaca",
+    "feed": "fixture",
+    "event_time_meaning": EventTimeMeaning.PROVIDER_MARKET_TIME,
+    "session_version": "nyse-2024-v1",
+    "quality_state": QualityState.OK,
+    "timing_label": TimingLabel.RECORDED,
+}
+
+
+def _trade(event_id, event_time, available_at, price, size, conditions=("ALL",)):
+    return TradeEvent(
+        **_COMMON, event_id=event_id, instrument_id="AAA",
+        event_time_ns=parse_utc_timestamp_ns(event_time), available_at_ns=parse_utc_timestamp_ns(available_at),
+        price=Decimal(price), size=Decimal(size), trade_id=event_id, venue="V", conditions=conditions,
+    )
+
+
+def _cancel(event_id, original_trade_id, available_at):
+    ns = parse_utc_timestamp_ns(available_at)
+    return TradeCorrectionEvent(
+        **_COMMON, event_id=event_id, instrument_id="AAA", event_time_ns=ns, available_at_ns=ns,
+        original_trade_id=original_trade_id, action="cancel",
+    )
+
+
+def _builder() -> TradeBarBuilder:
+    return TradeBarBuilder("AAA", "fixture", "1Min", FixtureBarRuleSet())
+
+
+def _assert_ohlc(snap: BarSnapshot, o, h, low, c):
+    assert (snap.open, snap.high, snap.low, snap.close) == (Decimal(o), Decimal(h), Decimal(low), Decimal(c))
+
+
+def test_worked_example_full_sequence():
+    builder = _builder()
+
+    # T1 09:30:05 100x10 ALL
+    s1 = builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    _assert_ohlc(s1, 100, 100, 100, 100)
+    assert (s1.volume, s1.trade_count) == (Decimal(10), 1)
+    assert (s1.vwap_numerator, s1.vwap_denominator) == (Decimal(1000), Decimal(10))
+    assert s1.status == SnapshotStatus.FORMING
+    # BAR-001: the prefix after T1 contains no later-trade information.
+    assert s1.close == Decimal(100)
+
+    # T2 09:30:20 102x20 ALL
+    s2 = builder.on_trade(_trade("T2", "2024-06-10T09:30:20Z", "2024-06-10T09:30:20Z", 102, 20))
+    _assert_ohlc(s2, 100, 102, 100, 102)
+    assert (s2.volume, s2.trade_count) == (Decimal(30), 2)
+    assert (s2.vwap_numerator, s2.vwap_denominator) == (Decimal(3040), Decimal(30))
+
+    # T3 09:30:30 150x5 VOLUME_ONLY: volume/count move, OHLC and VWAP do not (BAR-004).
+    s3 = builder.on_trade(_trade("T3", "2024-06-10T09:30:30Z", "2024-06-10T09:30:30Z", 150, 5, ("VOLUME_ONLY",)))
+    _assert_ohlc(s3, 100, 102, 100, 102)
+    assert (s3.volume, s3.trade_count) == (Decimal(35), 3)
+    assert (s3.vwap_numerator, s3.vwap_denominator) == (Decimal(3040), Decimal(30))
+
+    # T4 09:30:50 101x10 ALL
+    s4 = builder.on_trade(_trade("T4", "2024-06-10T09:30:50Z", "2024-06-10T09:30:50Z", 101, 10))
+    _assert_ohlc(s4, 100, 102, 100, 101)
+    assert (s4.volume, s4.trade_count) == (Decimal(45), 4)
+    assert (s4.vwap_numerator, s4.vwap_denominator) == (Decimal(4050), Decimal(40))
+
+    # 09:31:00 timer: close current knowledge. A quiet 10s before close still gets its closure (BAR-009).
+    closed = builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:31:00Z"))
+    assert len(closed) == 1
+    s_closed = closed[0]
+    _assert_ohlc(s_closed, 100, 102, 100, 101)
+    assert s_closed.status == SnapshotStatus.CLOSED_AS_OF
+    assert s_closed.revision == 0
+
+    # T5 arrives 09:31:05 with event_time 09:30:55 (late, same bucket): BAR-006 current-time revision.
+    s5 = builder.on_trade(_trade("T5", "2024-06-10T09:30:55Z", "2024-06-10T09:31:05Z", 103, 5))
+    _assert_ohlc(s5, 100, 103, 100, 103)
+    assert (s5.volume, s5.trade_count) == (Decimal(50), 5)
+    assert (s5.vwap_numerator, s5.vwap_denominator) == (Decimal(4565), Decimal(45))
+    assert s5.status == SnapshotStatus.REVISED
+    assert s5.revision == 1
+    assert s5.available_at_ns == parse_utc_timestamp_ns("2024-06-10T09:31:05Z")
+
+    # Cancel T2 at 09:31:10: recompute, not "subtract volume" (BAR-007).
+    s6 = builder.on_correction(_cancel("cxl-T2", "T2", "2024-06-10T09:31:10Z"))
+    _assert_ohlc(s6, 100, 103, 100, 103)
+    assert (s6.volume, s6.trade_count) == (Decimal(30), 4)
+    assert (s6.vwap_numerator, s6.vwap_denominator) == (Decimal(2525), Decimal(25))
+    assert s6.revision == 2
+
+    # Cancel T5 at 09:31:15.
+    s7 = builder.on_correction(_cancel("cxl-T5", "T5", "2024-06-10T09:31:15Z"))
+    _assert_ohlc(s7, 100, 101, 100, 101)
+    assert (s7.volume, s7.trade_count) == (Decimal(25), 3)
+    assert (s7.vwap_numerator, s7.vwap_denominator) == (Decimal(2010), Decimal(20))
+    assert s7.revision == 3
+
+    # BAR-010: the originally-closed snapshot object itself never changed.
+    assert s_closed.close == Decimal(101)
+    assert s_closed.revision == 0
+
+
+# ---- BAR-002: half-open interval boundary ------------------------------------
+
+def test_boundary_trade_belongs_to_the_next_bucket():
+    builder = _builder()
+    first_bucket_start = parse_utc_timestamp_ns("2024-06-10T09:30:00Z")
+    next_bucket_start = parse_utc_timestamp_ns("2024-06-10T09:31:00Z")
+    assert builder.bucket_start_ns(next_bucket_start) == next_bucket_start
+    assert builder.bucket_start_ns(next_bucket_start) != first_bucket_start
+
+    boundary_trade = builder.on_trade(_trade("Tb", "2024-06-10T09:31:00Z", "2024-06-10T09:31:00Z", 200, 1))
+    assert boundary_trade.bar_start_ns == next_bucket_start
+
+
+def test_nanosecond_precision_is_preserved_in_bucket_assignment():
+    builder = _builder()
+    just_before = parse_utc_timestamp_ns("2024-06-10T09:30:59.999999999Z")
+    assert builder.bucket_start_ns(just_before) == parse_utc_timestamp_ns("2024-06-10T09:30:00Z")
+
+
+# ---- BAR-005: idempotent redelivery vs. conflicting duplicate ---------------
+
+def test_identical_redelivery_is_idempotent():
+    builder = _builder()
+    trade = _trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10)
+    first = builder.on_trade(trade)
+    second = builder.on_trade(trade)
+    assert (first.volume, first.trade_count) == (second.volume, second.trade_count) == (Decimal(10), 1)
+
+
+def test_conflicting_redelivery_without_a_correction_is_rejected():
+    builder = _builder()
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    with pytest.raises(ConflictingTradeError):
+        builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 999, 10))
+
+
+# ---- BAR-007: unresolved original references --------------------------------
+
+def test_correction_referencing_an_unknown_trade_id_is_rejected():
+    builder = _builder()
+    with pytest.raises(UnresolvedCorrectionError):
+        builder.on_correction(_cancel("cxl-ghost", "no-such-trade", "2024-06-10T09:31:10Z"))
+
+
+# ---- BAR-008: no-price / no-trade states stay distinct -----------------------
+
+def test_volume_only_only_bucket_has_no_eligible_price():
+    builder = _builder()
+    snap = builder.on_trade(_trade("T3", "2024-06-10T09:30:30Z", "2024-06-10T09:30:30Z", 150, 5, ("VOLUME_ONLY",)))
+    assert snap.open is None
+    assert snap.high is None
+    assert snap.low is None
+    assert snap.close is None
+    assert snap.volume == Decimal(5)
+    assert snap.vwap_denominator == Decimal(0)
+
+
+def test_empty_bucket_snapshot_has_no_trades_and_no_price():
+    builder = _builder()
+    snap = builder.snapshot(parse_utc_timestamp_ns("2024-06-10T09:30:00Z"), parse_utc_timestamp_ns("2024-06-10T09:30:00Z"))
+    assert snap.trade_count == 0
+    assert snap.volume == Decimal(0)
+    assert snap.open is None
+
+
+# ---- BAR-009: timer closes a quiet bucket without waiting for a trade -------
+
+def test_timer_closes_a_bucket_with_no_recent_trade():
+    builder = _builder()
+    builder.on_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
+    closed = builder.advance_clock(parse_utc_timestamp_ns("2024-06-10T09:31:00Z"))
+    assert len(closed) == 1
+    assert closed[0].status == SnapshotStatus.CLOSED_AS_OF
