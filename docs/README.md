@@ -7,5 +7,6 @@ Use these documents in this order:
 3. [PUBLIC_SESSION_RUNS.md](PUBLIC_SESSION_RUNS.md): runnable public examples, configuration and exact risk/cost semantics.
 4. [decisions.md](decisions.md), [contracts.md](contracts.md), [data_rules.md](data_rules.md), [experiments.md](experiments.md): research authority and behavioral contracts.
 5. [M2_IMPLEMENTATION_STATUS.md](M2_IMPLEMENTATION_STATUS.md): brief milestone status.
+6. [COPILOT_WORKFLOW.md](COPILOT_WORKFLOW.md): selectable roles, reusable skills/prompts, test selection and implementation/review handoffs.
 
 Uppercase handoff, repair and earlier plan documents retain historical context. Their initial-state descriptions and old file paths are not the current architecture. Do not treat a past test count as verification of a newer checkout. `AGENTS.md` at the repository root governs implementation work.
