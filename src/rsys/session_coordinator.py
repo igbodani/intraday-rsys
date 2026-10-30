@@ -94,6 +94,8 @@ class SessionCoordinator:
         self.execution_factory = execution_factory or (lambda _session_date: ExecutionPolicy())
         self.top_n = top_n
         self.results: list[SessionResult] = []
+        self._last_attempted_date: date | None = None
+        self._failed = False
 
     def apply_split(self, action: SplitAction) -> None:
         """Apply `action` to any currently open position in `action.symbol`. Raises
@@ -140,6 +142,10 @@ class SessionCoordinator:
             raise CalendarCoverageError(
                 f"{session_date.isoformat()} is not a trading day under {CALENDAR_VERSION}"
             )
+        if self._last_attempted_date is not None and session_date <= self._last_attempted_date:
+            raise ValueError("session dates must be strictly increasing; duplicate sessions are forbidden")
+        if self._failed:
+            raise ValueError("a failed session requires a fresh coordinator and reconciled account")
         if self.portfolio.positions:
             raise UnreconciledPositionError(
                 f"{session_date.isoformat()} cannot start a new session with open "
@@ -156,11 +162,18 @@ class SessionCoordinator:
             top_n=self.top_n,
             session_date=session_date.isoformat(),
         )
-        runner.run_session(bars_by_symbol, scanner_inputs)
+        # A runtime failure may have committed account transitions. Never silently retry
+        # or advance that partially executed account as a successful session.
+        self._last_attempted_date = session_date
+        try:
+            runner.run_session(bars_by_symbol, scanner_inputs)
+        except Exception:
+            self._failed = True
+            raise
         self.results.append(
             SessionResult(
                 session_date=session_date,
-                session_open_ns=runner.origin_ns,
+                session_open_ns=int(session_open_utc(session_date).timestamp()) * 1_000_000_000,
                 decisions=list(runner.decisions),
                 fills=list(runner.fills),
                 contexts=list(runner.contexts),

@@ -11,8 +11,9 @@ Offline, synthetic-first implementation of the intraday research system governed
 - Observations: completed-bar callbacks on new completed publications; separately opted-in intrabar callbacks after each availability batch. Two named synthetic observers can run through the CLI and record the versions they read, including evaluations that produce no decision.
 
 - Synthetic account sessions: scanner ranking, ORB/VWAP, owned cash reservations, fill-time sizing, entry-interval protection, independent timers, net metrics, guarded comparison and portable reports. The bar session runner now uses ReplayRunner-backed source views and the shared phase clock.
+- Python APIs: shared fill/account contracts, synthetic trade-input execution, fixture-backed historical scanner inputs, chronological multi-session coordination, and session-end drawdown/exposure diagnostics. Trade decisions run at phase 40, exits at 60 and rank-ordered entries at 70. These APIs are not yet public historical-run CLI modes.
 
-Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md) for the module/test inventory and Copilot work order. [M2_REPAIR_RESULTS.md](docs/M2_REPAIR_RESULTS.md) records the current repairs; [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md) remains the earlier data-replay repair record.
+Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md) for the module/test inventory and Copilot work order. [DEVELOP_REPAIR_RESULTS.md](docs/DEVELOP_REPAIR_RESULTS.md) records the latest session, trade, scanner and statistics repairs. [M2_REPAIR_RESULTS.md](docs/M2_REPAIR_RESULTS.md) and [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md) retain the earlier repair history.
 
 ## Run locally
 
@@ -33,7 +34,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **622 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The verified suite contains **702 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 
@@ -47,6 +48,6 @@ Quote freshness is measured from availability at the decision clock under the de
 
 ## Current limits and next ticket
 
-The account/session layer is a repaired synthetic subset of M2. Next, consolidate the fill/account contract and integrate the subsequent-trade adapter through ReplayRunner, acceptance, risk checks and the ledger. Historical scanner RVOL, multi-session composition and a complete data-loader holdout boundary remain unfinished. The detailed ordered tasks and acceptance tests are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
+The account/session layer is a repaired synthetic subset of M2. Shared contracts and the trade-input account path now exist. Next, expose the repaired Python APIs through strict public run configuration and retained evidence, implement the recorded research risk/cost policies, and complete dated/as-of historical loading and loader-level holdout protection. Historical scanner helpers still consume caller-prepared same-minute observations; no audited provider history exists. The detailed gates are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
 
-`fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts only its strict synthetic bar schema. A run with no required flatten may retain open positions as a finite-input diagnostic; a missing required exit is incomplete. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09–D13, D16–D17 and provider-facing D22 remain unresolved.
+`fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts only its strict synthetic bar schema. A run with no required flatten may retain open positions as a finite-input diagnostic; a missing required exit is incomplete. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09/D12/D22 remain Open; D13/D16/D17 are Proposed. D10/D11 are recorded Decided but their research policies are not yet enforced by the synthetic runtime.

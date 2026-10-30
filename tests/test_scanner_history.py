@@ -51,7 +51,7 @@ def test_candidate_input_matches_the_h01_hand_calculation():
         }
     )
     row = candidate_input(
-        symbol="AAA", decision_date=DECISION_DATE, elapsed_minutes=60,
+        symbol="AAA", decision_date=date(2024, 12, 3), elapsed_minutes=60,
         current_volume=Decimal(1200), latest_close=Decimal(103), provider=provider,
         lookback_sessions=2, min_dollar_volume=Decimal(1000000),
     )

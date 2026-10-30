@@ -1,17 +1,21 @@
 # M2 implementation status
 
-Updated 2026-10-29, following the repairs on `fix/r3-replay-causality` from base `de33f33`.
+Updated 2026-10-29 after review of develop `bab9082` and repairs on `fix/r3-replay-causality`. Use the containing commit as the repaired source revision.
 
-The system now runs offline synthetic ORB/VWAP bar examples through ReplayRunner-backed source publication and bounded strategy views, a shared phase queue, owned reservations, fill-time sizing, protective exits, timers, marked equity and retained evidence. F01–F17 use the same phase queue and the validated account/sizing modules. The isolated trade adapter is hardened but remains outside account execution.
+Synthetic ORB/VWAP bar sessions and the Python trade-input API use ReplayRunner, bounded strategy views, shared account transitions, sizing and timers. Fixture-backed scanner history, chronological multi-session coordination and descriptive statistics exist as Python APIs. Public `rsys run` still accepts only the strict single-session synthetic bar schema.
 
-The earlier 557-test standalone implementation contained timing, cash, metric and evidence defects despite a green suite. The new regressions and their outcomes are recorded in [M2_REPAIR_RESULTS.md](M2_REPAIR_RESULTS.md). The complete module/test inventory, limitations and step-by-step Copilot plan are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md).
+The 678-test develop snapshot contained eight reproduced defects. [DEVELOP_REPAIR_RESULTS.md](DEVELOP_REPAIR_RESULTS.md) documents the repairs and 24 new regression cases: **702 tests pass**, Ruff is clean, and 19 public-command invocations pass their expected exits and repeatability checks.
 
-| Milestone area | Current state | Remaining gate |
+| Area | Current state | Remaining gate |
 |---|---|---|
-| M2-01 account/bar execution | Synthetic core repaired; real phase scheduling, ledger checks and F01–F17 executable | Consolidate remaining fixture/session adapter policy, complete declared account/corporate-action contracts; do not call the whole milestone complete from fixture counts alone |
-| M2-01T | Isolated subsequent-trade eligibility/exit adapter tested | ReplayRunner/SeriesRouter → acceptance → cash/quantity checks → trade fills → ledger → evidence integration |
-| M2-02 | ORB strategy and deterministic scanner ranking implemented | Calendar-aware historical RVOL, liquidity eligibility, historical universe and source evidence |
-| M2-03 | Completed-bar VWAP state machine and synthetic session composition implemented | Verified data/features, broader session composition and the remaining full-engine acceptance matrix |
-| M2-04 | Strict synthetic run, net metrics, guarded pair comparison and portable HTML report | Multi-session evaluation, complete loader holdout enforcement, richer reports and authorized final protocol |
+| M2-01 account/bar execution | Shared contracts, session-scoped transaction IDs, Decimal ledger and F01–F17 | Complete account/corporate-action policy and implement recorded research risk/cost settings |
+| M2-01T | Trade runner connects SeriesRouter/ReplayRunner, phase-40 decisions, phase-60 exits, phase-70 ranked entries, quality validation and post-request timer fills | Public configuration, retained evidence, full event-key support for equal market timestamps and audited provider semantics |
+| M2-02 | ORB, ranking, RVOL/gain math and fixture history with enforced prior-session dates | Minute-specific dated/as-of provider history, coverage/universe audit, denominator and exclusion evidence |
+| M2-03 | VWAP and bar-based multi-session coordinator; fresh strategies, persistent account and increasing session dates | Public multi-session composition, broader strategy matrix and complete supported corporate-action lifecycle |
+| M2-04 | Synthetic run/report/compare CLI; corrected session-end drawdown and scheduled-time exposure | Multi-session CLI evidence/reports, loader holdout enforcement and frozen final protocol |
 
-`rsys replay` remains data-only; `rsys run` remains synthetic bar-only. Real provider adapters, historical research, optimizer/search, paper/live trading and final evaluation are not implemented. D09–D13/D16/D17 and provider-facing D22 remain open; no research choices were made by this repair.
+Exposure uses account availability clipped to scheduled regular hours. An unclosed diagnostic position contributes through scheduled close; this proves neither closure nor complete coverage. Drawdown includes starting capital but remains session-end-only.
+
+D10/D11 are recorded Decided while their research values remain unapplied in executable baseline configuration. D09/D12/D22 remain Open; D13/D16/D17 are Proposed. No research values or approvals changed in this repair. The register's future-dated owner-round entry is flagged for provenance verification.
+
+Alpaca acquisition, broker execution, historical-performance evidence, optimization, paper/live trading and final evaluation remain unimplemented. `final-evaluate` deliberately exits 5. Next: a reproducible multi-session public run with retained evidence; risk/cost policy and audited historical loading must precede market-result claims.

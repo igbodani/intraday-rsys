@@ -13,6 +13,7 @@ Execution mode identifier: `subsequent_trade_estimate_v1` (`TradeInputRunner.EXE
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime
 from decimal import Decimal
@@ -21,7 +22,6 @@ from rsys.acceptance import AcceptanceBook, sort_proposals
 from rsys.calendar import to_exchange_utc
 from rsys.data.bar_rules import BarRuleSet, FixtureBarRuleSet
 from rsys.data.events import BarCloseEvent, TradeCorrectionEvent, TradeEvent
-from rsys.data.keys import ReplayKey
 from rsys.execution_contract import (
     RejectedEntry,
     commit_entry,
@@ -32,7 +32,7 @@ from rsys.execution_contract import (
 from rsys.orders import AcceptedIntent
 from rsys.phase_engine import PhaseEvent
 from rsys.portfolio import AcceptanceError, Portfolio
-from rsys.replay import Phase, ReplayProfile
+from rsys.replay import ReplayProfile
 from rsys.replay_runtime import ReplayRunner, SeriesRouter
 from rsys.scanner import CandidateInput, rank_candidates
 from rsys.sizing import size_quantity
@@ -91,17 +91,20 @@ class TradeInputRunner:
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
         )
-        self.book = AcceptanceBook()
+        self.book = AcceptanceBook(reservation_namespace=str(self.origin_ns))
         self.pending_intents: dict[str, AcceptedIntent] = {}
         self.consumed_trade_ids: dict[str, frozenset[str]] = {}
         self.entry_times: dict[str, int] = {}
         self.exit_due: set[str] = set()
         self.exit_reasons: dict[str, str] = {}
+        self.exit_requested_at: dict[str, int] = {}
         self.adapters: dict[str, TradeExecutionAdapter] = {}
         self.decisions: list[DecisionRecord] = []
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
         self.contexts = []
+        self._decision_points: set[int] = set()
+        self._trade_batches: dict[int, list[TradeEvent]] = {}
         self._ran = False
 
     def _ns(self, ms):
@@ -129,12 +132,14 @@ class TradeInputRunner:
         for symbol in sorted(trades_by_symbol):
             previous = None
             for trade in trades_by_symbol[symbol]:
+                if getattr(trade, "is_correction", False):
+                    raise ValueError("correction inputs must use corrections_by_symbol with an original trade ID")
                 if previous is not None and trade.event_time_ms <= previous:
                     raise ValueError("duplicate or unordered trade event times")
                 previous = trade.event_time_ms
                 sources.append(
                     TradeEvent(
-                        event_id=trade.trade_id,
+                        event_id=f"{symbol}:{trade.trade_id}",
                         instrument_id=symbol,
                         provider="synthetic",
                         feed=self.feed,
@@ -142,19 +147,21 @@ class TradeInputRunner:
                         available_at_ns=self._ns(trade.available_at_ms),
                         event_time_meaning="provider_market_time",
                         session_version="nyse-2024-v1",
-                        quality_state="ok",
+                        quality_state="ok" if getattr(trade, "quality_ok", True) else "invalid",
                         timing_label="modeled",
                         price=trade.price,
-                        size=Decimal(1),
+                        size=getattr(trade, "size", Decimal(1)),
                         trade_id=trade.trade_id,
                         venue="synthetic",
+                        conditions=getattr(trade, "conditions", ()),
+                        tape=getattr(trade, "tape", None),
                     )
                 )
         for symbol, corrections in (corrections_by_symbol or {}).items():
             for correction in corrections:
                 sources.append(
                     TradeCorrectionEvent(
-                        event_id=f"corr:{correction['original_trade_id']}:"
+                        event_id=f"corr:{symbol}:{correction['original_trade_id']}:"
                         f"{correction['available_at_ms']}",
                         instrument_id=symbol,
                         provider="synthetic",
@@ -167,6 +174,10 @@ class TradeInputRunner:
                         timing_label="modeled",
                         original_trade_id=correction["original_trade_id"],
                         action=correction.get("action", "cancel"),
+                        corrected_price=correction.get("corrected_price"),
+                        corrected_size=correction.get("corrected_size"),
+                        conditions=correction.get("conditions"),
+                        tape=correction.get("tape"),
                     )
                 )
         router = SeriesRouter(self.feed, self.interval, self.rules)
@@ -218,8 +229,16 @@ class TradeInputRunner:
                 result = self._on_trade(source, point)
             elif isinstance(source, TradeCorrectionEvent):
                 self._on_correction(source)
-            elif isinstance(source, BarCloseEvent):
-                result = self._decide(event.available_at_ns, point)
+            elif isinstance(source, BarCloseEvent) and point not in self._decision_points:
+                self._decision_points.add(point)
+                self.engine.enqueue(self._event(f"decision:{point}", point, 40, "decision"))
+        elif event.kind == "decision":
+            result = self._decide(event, point)
+        elif event.kind == "trade_exits":
+            self._execute_trades(point, entries=False)
+        elif event.kind == "trade_entries":
+            self._execute_trades(point, entries=True)
+            del self._trade_batches[point]
         elif event.kind == "accept":
             result = self._accept(
                 event.payload["proposals"], event.payload["record"], point
@@ -235,12 +254,14 @@ class TradeInputRunner:
             self.exit_due.update(self.portfolio.positions)
             for symbol in self.portfolio.positions:
                 self.exit_reasons.setdefault(symbol, "FLATTEN")
+                self.exit_requested_at.setdefault(symbol, point)
             for symbol in list(self.pending_intents):
                 self._cancel(symbol, point, "FLATTEN")
         elif event.kind == "max_hold":
             if self.entry_times.get(event.symbol) == event.payload["entry_time"]:
                 self.exit_due.add(event.symbol)
                 self.exit_reasons.setdefault(event.symbol, "MAX_HOLD")
+                self.exit_requested_at.setdefault(event.symbol, point)
         self.portfolio.assert_invariants()
         row = {
             "kind": event.kind,
@@ -268,23 +289,41 @@ class TradeInputRunner:
         return result
 
     def _on_trade(self, source: TradeEvent, point: int) -> None:
-        symbol = source.instrument_id
-        if symbol in self.portfolio.positions:
-            self.portfolio.mark_position(symbol, source.price)
-            trade = Trade(source.trade_id, self._ms(source.event_time_ns), point, source.price)
-            self._attempt_exit(symbol, trade, point)
-        elif symbol in self.pending_intents:
-            trade = Trade(source.trade_id, self._ms(source.event_time_ns), point, source.price)
-            self._attempt_entry(symbol, trade, point)
+        # Apply all publications before decisions, and all exits before rank-ordered
+        # entries. Source dispatch order must not become portfolio acceptance priority.
+        if point not in self._trade_batches:
+            self._trade_batches[point] = []
+            self.engine.enqueue(self._event(f"trade-exits:{point}", point, 60, "trade_exits"))
+            self.engine.enqueue(self._event(f"trade-entries:{point}", point, 70, "trade_entries"))
+        self._trade_batches[point].append(source)
+
+    def _execute_trades(self, point: int, *, entries: bool) -> None:
+        sources = self._trade_batches[point]
+        symbols = (
+            [p.symbol for p in sort_proposals([i.proposal for i in self.pending_intents.values()])]
+            if entries else sorted(self.portfolio.positions)
+        )
+        for symbol in symbols:
+            for source in sources:
+                if source.instrument_id != symbol:
+                    continue
+                trade = Trade(
+                    source.trade_id, self._ms(source.event_time_ns), point, source.price,
+                    quality_ok=source.quality_state == "ok", size=source.size,
+                    conditions=source.conditions, tape=source.tape,
+                )
+                if entries and symbol in self.pending_intents:
+                    self._attempt_entry(symbol, trade, point)
+                elif not entries and symbol in self.portfolio.positions:
+                    self.portfolio.mark_position(symbol, source.price)
+                    self._attempt_exit(symbol, trade, point)
 
     def _on_correction(self, source: TradeCorrectionEvent) -> None:
-        adapter = self.adapters.get(source.instrument_id)
-        if adapter is not None:
-            adapter.apply_correction(source.original_trade_id)
+        self._adapter(source.instrument_id).apply_correction(source.original_trade_id)
 
-    def _decide(self, available_at_ns: int, point: int) -> DecisionRecord:
-        cutoff = ReplayKey(available_at_ns, int(Phase.SCAN_SIGNAL), 2**63 - 1)
-        context = self.replay.context_after(cutoff, intrabar=False)
+    def _decide(self, event: PhaseEvent, point: int) -> DecisionRecord:
+        available_at_ns = event.available_at_ns
+        context = self.replay.context_after(event.sort_key, intrabar=False)
         self.contexts.append(context)
         scan = rank_candidates(
             [CandidateInput(s, *v) for s, v in self.scanner_inputs.get(point, {}).items()],
@@ -402,7 +441,7 @@ class TradeInputRunner:
     def _attempt_entry(self, symbol, trade: Trade, point: int) -> None:
         intent = self.pending_intents[symbol]
         proposal = intent.proposal
-        adapter = self._adapter(symbol)
+        adapter = deepcopy(self._adapter(symbol))
         consumed = self.consumed_trade_ids.get(symbol, frozenset())
         outcome = adapter.consider_entry(intent, consumed, trade)
         if outcome.status != "FILLED":
@@ -426,10 +465,13 @@ class TradeInputRunner:
             outcome,
             instrument=symbol,
             intent_identity=intent.reservation_id,
-            activation_key=f"{symbol}:{point}",
+            activation_key=f"{symbol}:{self._ns(point)}",
             availability_key=point,
             market_time_ms=trade.event_time_ms,
             quantity=qty,
+        )
+        transition = replace(
+            transition, execution_reference_id=f"entry:{self.origin_ns}:{symbol}:{trade.trade_id}"
         )
         commit_entry(
             self.portfolio,
@@ -438,6 +480,7 @@ class TradeInputRunner:
             target=None,
             reserved_cash=intent.reserved_cash,
         )
+        self.adapters[symbol] = adapter
         target = self.strategies[symbol].on_filled(transition.price)
         self.portfolio.positions[symbol].target = target
         del self.pending_intents[symbol]
@@ -470,7 +513,9 @@ class TradeInputRunner:
         adapter = self._adapter(symbol)
         position = self.portfolio.positions[symbol]
         if symbol in self.exit_due:
-            outcome = adapter.force_exit(trade, self.exit_reasons[symbol])
+            outcome = adapter.force_exit(
+                trade, self.exit_reasons[symbol], requested_at_ms=self.exit_requested_at[symbol]
+            )
         else:
             outcome = adapter.consider_exit(position, trade)
         if outcome.status != "FILLED":
@@ -479,10 +524,13 @@ class TradeInputRunner:
             outcome,
             instrument=symbol,
             intent_identity=f"position:{symbol}",
-            activation_key=f"{symbol}:{self.entry_times[symbol]}",
+            activation_key=f"{symbol}:{self._ns(self.entry_times[symbol])}",
             availability_key=point,
             market_time_ms=trade.event_time_ms,
             quantity=position.quantity,
+        )
+        transition = replace(
+            transition, execution_reference_id=f"exit:{self.origin_ns}:{symbol}:{trade.trade_id}"
         )
         qty = position.quantity
         pnl = transition.price * qty - transition.fee - position.basis
@@ -491,6 +539,7 @@ class TradeInputRunner:
         self.entry_times.pop(symbol)
         self.exit_due.discard(symbol)
         self.exit_reasons.pop(symbol, None)
+        self.exit_requested_at.pop(symbol, None)
         self.fills.append(
             FillRecord(
                 point,

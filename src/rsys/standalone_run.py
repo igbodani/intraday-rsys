@@ -472,7 +472,7 @@ class StandaloneRunner:
                 transition = FillTransition(
                     instrument=symbol,
                     intent_identity=intent.reservation_id,
-                    activation_key=f"{symbol}:{point}",
+                    activation_key=f"{symbol}:{self._ns(point)}",
                     execution_reference_id=f"entry:{intent.reservation_id}",
                     availability_key=point,
                     quantity=qty,
@@ -524,8 +524,8 @@ class StandaloneRunner:
         transition = FillTransition(
             instrument=symbol,
             intent_identity=f"position:{symbol}",
-            activation_key=f"{symbol}:{self.entry_times[symbol]}",
-            execution_reference_id=f"exit:{symbol}:{self.entry_times[symbol]}",
+            activation_key=f"{symbol}:{self._ns(self.entry_times[symbol])}",
+            execution_reference_id=f"exit:{symbol}:{self._ns(self.entry_times[symbol])}",
             availability_key=point,
             quantity=qty,
             price=price,

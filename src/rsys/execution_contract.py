@@ -208,9 +208,8 @@ def from_trade_outcome(
 ) -> FillTransition:
     """Converts a subsequent-trade adapter's `FILLED` outcome into the same
     `FillTransition` contract a bar-open adapter produces, so the account-commit boundary
-    is identical regardless of adapter (the trade adapter stays unwired from
-    `PhaseEngine`/`ReplayRunner` until Step 2; this conversion only proves one shared
-    output contract). `FillOutcome` carries no quantity -- the caller's own proposal/
+    is identical regardless of adapter. `TradeInputRunner` supplies session/instrument
+    scoped transaction references before committing. `FillOutcome` carries no quantity -- the caller's own proposal/
     position already owns it -- so it is supplied explicitly."""
     if outcome.status != "FILLED":
         raise ValueError(f"cannot convert a non-FILLED outcome: {outcome.status!r}")

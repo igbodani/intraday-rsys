@@ -71,7 +71,7 @@ class FixtureHistoryProvider:
 
     def sessions_before(self, symbol: str, decision_date: date) -> list[HistorySession]:
         record = self._history.get(symbol)
-        return list(record.sessions) if record else []
+        return _prior_sessions(record.sessions if record else [], decision_date)
 
     def previous_session_close(self, symbol: str, decision_date: date) -> Decimal | None:
         record = self._history.get(symbol)
@@ -88,6 +88,18 @@ class FixtureHistoryProvider:
         ):
             return None
         return record.prior_session_volume, record.prior_session_close_for_dollar_volume
+
+
+def _prior_sessions(sessions: list[HistorySession], decision_date: date) -> list[HistorySession]:
+    """Enforce the dated boundary even for a provider that returns unbounded history.
+
+    Keep missing prior rows in the calendar selection: never backfill a missing selected
+    observation with an older session. Duplicate dates are ambiguous, not extra samples.
+    """
+    prior = [s for s in sessions if s.session_date < decision_date]
+    if len({s.session_date for s in prior}) != len(prior):
+        raise ValueError("duplicate scanner history session date")
+    return sorted(prior, key=lambda s: s.session_date, reverse=True)
 
 
 def candidate_input(
@@ -116,7 +128,9 @@ def candidate_input(
         elapsed_minutes=elapsed_minutes,
         lookback_sessions=lookback_sessions,
         current_volume=current_volume,
-        history_newest_first=provider.sessions_before(symbol, decision_date),
+        history_newest_first=_prior_sessions(
+            provider.sessions_before(symbol, decision_date), decision_date
+        ),
         feed=feed,
         history_feed=history_feed,
     ).value
@@ -156,7 +170,11 @@ def build_scanner_inputs(
     result: dict[int, dict[str, tuple[Decimal | None, Decimal | None, bool]]] = {}
     for symbol, bars in bars_by_symbol.items():
         cumulative_volume = Decimal(0)
+        previous_point = None
         for bar in bars:
+            if previous_point is not None and bar.available_at_ms <= previous_point:
+                raise ValueError("scanner bars must have strictly increasing availability")
+            previous_point = bar.available_at_ms
             cumulative_volume += bar.volume
             elapsed_minutes = (bar.available_at_ms - session_open_ms) // 60_000
             row = candidate_input(

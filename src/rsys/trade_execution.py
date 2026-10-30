@@ -8,8 +8,8 @@ declared quality policy can never represent a new execution opportunity -- regar
 when it happens to arrive. Exits check stops before targets in the trades' own observed
 order (not the bar-mode "stop always wins" rule, since a real trade sequence is known).
 
-Honesty note: standalone module, not wired into `PhaseEngine`/`ReplayRunner`/real market
-data; quote state is not modeled at all -- see docs/M2_IMPLEMENTATION_STATUS.md.
+Used by the synthetic `TradeInputRunner` through `PhaseEngine`/`ReplayRunner`.
+Real market data and quote-based fills remain unimplemented.
 """
 
 from __future__ import annotations
@@ -40,9 +40,15 @@ class Trade:
     price: Decimal
     quality_ok: bool = True
     is_correction: bool = False
+    size: Decimal = Decimal(1)  # explicit unit-size default for legacy synthetic fixtures
+    conditions: tuple[str, ...] = ()
+    tape: str | None = None
 
     def __post_init__(self):
         amount(self.price, "trade price", positive=True)
+        amount(self.size, "trade size", positive=True)
+        if type(self.quality_ok) is not bool or type(self.is_correction) is not bool:
+            raise ValueError("trade quality/correction flags must be booleans")
         if not self.trade_id or any(
             type(v) is not int or v < 0
             for v in (self.event_time_ms, self.available_at_ms)
@@ -186,7 +192,7 @@ class TradeExecutionAdapter:
             )
         return FillOutcome(SKIPPED, trade_id=trade.trade_id)
 
-    def force_exit(self, trade: Trade, reason: str) -> FillOutcome:
+    def force_exit(self, trade: Trade, reason: str, *, requested_at_ms: int) -> FillOutcome:
         """A due timer/flatten boundary has already passed: the next otherwise-eligible
         trade becomes the exit reference unconditionally, instead of waiting for a stop/
         target cross (M2-01T Do #6 -- never an invented bar open). Still subject to every
@@ -194,6 +200,8 @@ class TradeExecutionAdapter:
         rejected = self._exit_eligibility(trade)
         if rejected is not None:
             return rejected
+        if trade.event_time_ms <= requested_at_ms or trade.available_at_ms <= requested_at_ms:
+            return FillOutcome(REJECTED_STALE, trade_id=trade.trade_id, reason="pre-exit-request print")
         self.exit_trade_id = trade.trade_id
         return FillOutcome(
             FILLED, price=trade.price, trade_id=trade.trade_id, reason=reason, fee=self.exit_fee
