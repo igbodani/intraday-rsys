@@ -29,6 +29,7 @@ from rsys.phase_engine import PhaseEvent
 from rsys.portfolio import AcceptanceError, Portfolio
 from rsys.replay import ReplayProfile
 from rsys.replay_runtime import ReplayRunner
+from rsys.risk_policy import ExecutionCosts, RiskManagedRunner, RiskMonitor
 from rsys.scanner import CandidateInput, rank_candidates
 from rsys.sizing import size_quantity
 from rsys.strategies.orb import CompletedBar
@@ -66,6 +67,11 @@ class FillRecord:
     reason: str | None = None
     # An OHLC touch has no exact market timestamp; availability is its bar publication.
     event_time_ms: int | None = None
+    reference_id: str | None = None
+    reference_price: Decimal | None = None
+    execution_cost: Decimal = Decimal(0)
+    risk_budget: Decimal | None = None
+    estimated_stop_loss: Decimal | None = None
 
 
 @dataclass
@@ -108,7 +114,7 @@ class IncompleteSessionError(ValueError):
     """Required execution data is absent or ambiguous; never a successful run."""
 
 
-class StandaloneRunner:
+class StandaloneRunner(RiskManagedRunner):
     def __init__(
         self,
         strategies: dict[str, StrategyLike],
@@ -118,12 +124,17 @@ class StandaloneRunner:
         execution: ExecutionPolicy | None = None,
         top_n: int = 20,
         session_date: str = "2024-11-29",
+        risk: RiskMonitor | None = None,
+        costs: ExecutionCosts | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
         self.sizing = sizing
         self.execution = execution or ExecutionPolicy()
         self.top_n = top_n
+        self.session_date = session_date
+        self.risk = risk
+        self.costs = costs or ExecutionCosts()
         self.origin_ns = (
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
@@ -132,6 +143,7 @@ class StandaloneRunner:
         self.pending_intents: dict[str, AcceptedIntent] = {}
         self.entry_times: dict[str, int] = {}
         self.exit_due: set[str] = set()
+        self.exit_requested_at: dict[str, int] = {}
         self.decisions: list[DecisionRecord] = []
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
@@ -152,12 +164,14 @@ class StandaloneRunner:
         if self._ran:
             raise ValueError("a runner is single-session and single-use")
         self._ran = True
+        self._begin_risk_session()
         sources, domain = [], []
         opens = {}
         times = set()
         for symbol in sorted(bars_by_symbol):
             previous = None
             for bar in bars_by_symbol[symbol]:
+                bar = replace(bar, available_at_ms=bar.available_at_ms + self.costs.feed_delay_ms)
                 if previous is not None and bar.bar_start_ms <= previous:
                     raise ValueError("duplicate or unordered bar intervals")
                 previous = bar.bar_start_ms
@@ -196,12 +210,13 @@ class StandaloneRunner:
                     )
                 )
                 # The open events deliberately contain no close/high/low or future reference.
-                opens.setdefault(bar.bar_start_ms, {})[symbol] = bar.open
+                open_point = bar.bar_start_ms + self.costs.feed_delay_ms
+                opens.setdefault(open_point, {})[symbol] = bar.open
                 for phase, kind in ((60, "open_exit"),):
                     domain.append(
                         self._event(
                             f"{kind}:{identity}",
-                            bar.bar_start_ms,
+                            open_point,
                             phase,
                             kind,
                             symbol,
@@ -225,7 +240,7 @@ class StandaloneRunner:
                     point,
                     40,
                     "decision",
-                    payload={"scanner": scanner_inputs.get(point, {})},
+                    payload={"scanner": scanner_inputs.get(point - self.costs.feed_delay_ms, {})},
                 )
             )
         if self.execution.flatten_at_ms is not None:
@@ -283,11 +298,14 @@ class StandaloneRunner:
                 self._cancel(event.symbol, point, "EXPIRED")
         elif event.kind == "flatten":
             self.exit_due.update(self.portfolio.positions)
+            for symbol in self.portfolio.positions:
+                self.exit_requested_at.setdefault(symbol, point)
             for symbol in list(self.pending_intents):
                 self._cancel(symbol, point, "FLATTEN")
         elif event.kind == "max_hold":
             if self.entry_times.get(event.symbol) == event.payload["entry_time"]:
                 self.exit_due.add(event.symbol)
+                self.exit_requested_at.setdefault(event.symbol, point)
         elif event.kind == "open_exit":
             self._open_exit(event.symbol, point, event.payload["open"])
         elif event.kind == "open_entries":
@@ -303,6 +321,7 @@ class StandaloneRunner:
             )
             for symbol in symbols:
                 self._open_entry(symbol, point, prices[symbol])
+        self._enforce_risk(point)
         self.portfolio.assert_invariants()
         row = {
             "kind": event.kind,
@@ -313,6 +332,8 @@ class StandaloneRunner:
             "symbol": event.symbol,
             "account": self._snapshot(),
         }
+        if self.risk is not None:
+            row["risk"] = self.risk.snapshot()
         if event.kind == "decision":
             row["scanner_inputs"] = event.payload["scanner"]
         if isinstance(result, DecisionRecord):
@@ -390,6 +411,8 @@ class StandaloneRunner:
     def _accept(self, proposals, record, point):
         for p in sort_proposals(proposals):
             try:
+                if reason := self._enforce_risk(point):
+                    raise AcceptanceError(reason)
                 if (
                     self.execution.flatten_at_ms is not None
                     and point >= self.execution.flatten_at_ms
@@ -405,7 +428,7 @@ class StandaloneRunner:
                 )
                 p = replace(p, quantity=qty)
                 intent = self.book.accept(
-                    self.portfolio, p, qty * p.signal_price + self.sizing.entry_fee
+                    self.portfolio, p, qty * self.costs.buy_price(p.signal_price) + self.sizing.entry_fee
                 )
             except AcceptanceError as exc:
                 record.rejected[p.symbol] = exc.reason
@@ -429,11 +452,11 @@ class StandaloneRunner:
 
     def _quantity(self, p, price, cash, maximum):
         return size_quantity(
-            entry=price,
-            stop=p.stop,
+            entry=self.costs.buy_price(price),
+            stop=self.costs.sell_price(p.stop),
             entry_fee=self.sizing.entry_fee,
             exit_fee=self.sizing.exit_fee,
-            risk_budget=self.sizing.risk_budget,
+            risk_budget=self._risk_budget(),
             available_cash=cash,
             quantity_step=self.sizing.quantity_step,
             max_quantity=maximum,
@@ -446,24 +469,28 @@ class StandaloneRunner:
         self.fills.append(FillRecord(point, symbol, reason, reason=reason))
 
     def _open_entry(self, symbol, point, price):
+        self._enforce_risk(point)
+        market_point = point - self.costs.feed_delay_ms
         intent = self.pending_intents.get(symbol)
         if intent is not None:
             p = intent.proposal
-            if point < p.ready_at_ms:
+            if market_point < p.ready_at_ms:
                 return
             if p.expires_at_ms is not None and point >= p.expires_at_ms:
                 self._cancel(symbol, point, "EXPIRED")
             else:
+                risk_budget = self._risk_budget()
                 decision = decide_bar_open_entry(
                     p,
                     point,
                     price,
-                    Decimal(0),
+                    self.costs.buy_price(price) - price,
                     self.portfolio.available_cash + intent.reserved_cash,
                     entry_fee=self.sizing.entry_fee,
                     exit_fee=self.sizing.exit_fee,
-                    risk_budget=self.sizing.risk_budget,
+                    risk_budget=risk_budget,
                     quantity_step=self.sizing.quantity_step,
+                    exit_slippage_bps=self.costs.adverse_bps,
                 )
                 if isinstance(decision, RejectedEntry):
                     self._cancel(symbol, point, decision.reason)
@@ -487,6 +514,7 @@ class StandaloneRunner:
                     target=None,
                     reserved_cash=intent.reserved_cash,
                 )
+                self.portfolio.mark_position(symbol, price)
                 target = self.strategies[symbol].on_filled(modeled_price)
                 self.portfolio.positions[symbol].target = target
                 del self.pending_intents[symbol]
@@ -500,7 +528,13 @@ class StandaloneRunner:
                         qty,
                         target,
                         self.sizing.entry_fee,
-                        event_time_ms=point,
+                        event_time_ms=market_point,
+                        reference_id=transition.execution_reference_id,
+                        reference_price=price,
+                        execution_cost=(modeled_price - price) * qty,
+                        risk_budget=risk_budget,
+                        estimated_stop_loss=qty * (modeled_price - self.costs.sell_price(p.stop))
+                        + self.sizing.entry_fee + self.sizing.exit_fee,
                     )
                 )
                 if self.execution.max_hold_ms is not None:
@@ -515,9 +549,11 @@ class StandaloneRunner:
                         )
                     )
         if symbol in self.portfolio.positions:
-            self._intervals[symbol] = point
+            self._intervals[symbol] = market_point
 
     def _exit(self, symbol, point, price, reason, *, event_time=None):
+        reference_price = price
+        price = self.costs.sell_price(price)
         pos = self.portfolio.positions[symbol]
         qty = pos.quantity
         pnl = price * qty - self.sizing.exit_fee - pos.basis
@@ -536,6 +572,7 @@ class StandaloneRunner:
         self.strategies[symbol].on_position_closed()
         self.entry_times.pop(symbol)
         self.exit_due.discard(symbol)
+        self.exit_requested_at.pop(symbol, None)
         self._intervals.pop(symbol, None)
         self.fills.append(
             FillRecord(
@@ -548,12 +585,20 @@ class StandaloneRunner:
                 net_pnl=pnl,
                 reason=reason,
                 event_time_ms=event_time,
+                reference_id=transition.execution_reference_id,
+                reference_price=reference_price,
+                execution_cost=(reference_price - price) * qty,
             )
         )
 
     def _open_exit(self, symbol, point, price):
         pos = self.portfolio.positions.get(symbol)
         if pos is None:
+            return
+        self.portfolio.mark_position(symbol, price)
+        self._enforce_risk(point)
+        market_point = point - self.costs.feed_delay_ms
+        if symbol in self.exit_due and market_point < self.exit_requested_at[symbol]:
             return
         if symbol in self._intervals:
             raise IncompleteSessionError(
@@ -567,7 +612,7 @@ class StandaloneRunner:
         label = {"pending": "TIMER", "stop": "STOP_GAP", "target": "TARGET_GAP"}[
             decision.kind
         ]
-        self._exit(symbol, point, decision.price, label, event_time=point)
+        self._exit(symbol, point, decision.price, label, event_time=market_point)
 
     def _settle(self, symbol, bar):
         if self._intervals.get(symbol) != bar.bar_start_ms:

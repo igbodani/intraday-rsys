@@ -207,6 +207,9 @@ def run_cli_entry(
         if raw is not None
         else {"data_unavailable_reason": "input could not be read"}
     )
+    if error is None and config.get("schema_version") == 2:
+        from rsys.batch_run import run_batch_cli
+        return run_batch_cli(config, raw, out_dir, report=report)
     storage = RunStorage(out_dir)
     try:
         record = start_run(

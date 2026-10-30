@@ -34,6 +34,7 @@ from rsys.phase_engine import PhaseEvent
 from rsys.portfolio import AcceptanceError, Portfolio
 from rsys.replay import ReplayProfile
 from rsys.replay_runtime import ReplayRunner, SeriesRouter
+from rsys.risk_policy import ExecutionCosts, RiskManagedRunner, RiskMonitor
 from rsys.scanner import CandidateInput, rank_candidates
 from rsys.sizing import size_quantity
 from rsys.standalone_run import (
@@ -59,7 +60,7 @@ __all__ = [
 _EXIT_LABELS = {"stop": "STOP_TRADE", "target": "TARGET_TRADE"}
 
 
-class TradeInputRunner:
+class TradeInputRunner(RiskManagedRunner):
     """Single-session, single-use: raw per-symbol trade prints in, a reconciled account
     and trace out. Unlike `StandaloneRunner`, an entry/exit never fires at a bar open; it
     fires on the first later trade the adapter accepts as an eligible reference."""
@@ -78,6 +79,8 @@ class TradeInputRunner:
         feed: str = "fixture",
         interval: str = "1Min",
         rules: BarRuleSet | None = None,
+        risk: RiskMonitor | None = None,
+        costs: ExecutionCosts | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -87,6 +90,9 @@ class TradeInputRunner:
         self.feed = feed
         self.interval = interval
         self.rules = rules or FixtureBarRuleSet()
+        self.session_date = session_date
+        self.risk = risk
+        self.costs = costs or ExecutionCosts()
         self.origin_ns = (
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
@@ -127,6 +133,7 @@ class TradeInputRunner:
         if self._ran:
             raise ValueError("a runner is single-session and single-use")
         self._ran = True
+        self._begin_risk_session()
         self.scanner_inputs = scanner_inputs
         sources = []
         for symbol in sorted(trades_by_symbol):
@@ -144,7 +151,7 @@ class TradeInputRunner:
                         provider="synthetic",
                         feed=self.feed,
                         event_time_ns=self._ns(trade.event_time_ms),
-                        available_at_ns=self._ns(trade.available_at_ms),
+                        available_at_ns=self._ns(trade.available_at_ms + self.costs.feed_delay_ms),
                         event_time_meaning="provider_market_time",
                         session_version="nyse-2024-v1",
                         quality_state="ok" if getattr(trade, "quality_ok", True) else "invalid",
@@ -167,7 +174,7 @@ class TradeInputRunner:
                         provider="synthetic",
                         feed=self.feed,
                         event_time_ns=self._ns(correction["available_at_ms"]),
-                        available_at_ns=self._ns(correction["available_at_ms"]),
+                        available_at_ns=self._ns(correction["available_at_ms"] + self.costs.feed_delay_ms),
                         event_time_meaning="provider_market_time",
                         session_version="nyse-2024-v1",
                         quality_state="ok",
@@ -262,6 +269,7 @@ class TradeInputRunner:
                 self.exit_due.add(event.symbol)
                 self.exit_reasons.setdefault(event.symbol, "MAX_HOLD")
                 self.exit_requested_at.setdefault(event.symbol, point)
+        self._enforce_risk(point)
         self.portfolio.assert_invariants()
         row = {
             "kind": event.kind,
@@ -272,6 +280,8 @@ class TradeInputRunner:
             "symbol": event.symbol,
             "account": self._snapshot(),
         }
+        if self.risk is not None:
+            row["risk"] = self.risk.snapshot()
         if isinstance(result, DecisionRecord):
             row.update(asdict(result))
         self.trace.append(row)
@@ -289,6 +299,8 @@ class TradeInputRunner:
         return result
 
     def _on_trade(self, source: TradeEvent, point: int) -> None:
+        if source.instrument_id in self.portfolio.positions:
+            self.portfolio.mark_position(source.instrument_id, source.price)
         # Apply all publications before decisions, and all exits before rank-ordered
         # entries. Source dispatch order must not become portfolio acceptance priority.
         if point not in self._trade_batches:
@@ -315,7 +327,6 @@ class TradeInputRunner:
                 if entries and symbol in self.pending_intents:
                     self._attempt_entry(symbol, trade, point)
                 elif not entries and symbol in self.portfolio.positions:
-                    self.portfolio.mark_position(symbol, source.price)
                     self._attempt_exit(symbol, trade, point)
 
     def _on_correction(self, source: TradeCorrectionEvent) -> None:
@@ -383,6 +394,8 @@ class TradeInputRunner:
     def _accept(self, proposals, record, point):
         for p in sort_proposals(proposals):
             try:
+                if reason := self._enforce_risk(point):
+                    raise AcceptanceError(reason)
                 if (
                     self.execution.flatten_at_ms is not None
                     and point >= self.execution.flatten_at_ms
@@ -398,7 +411,7 @@ class TradeInputRunner:
                 )
                 p = replace(p, quantity=qty)
                 intent = self.book.accept(
-                    self.portfolio, p, qty * p.signal_price + self.sizing.entry_fee
+                    self.portfolio, p, qty * self.costs.buy_price(p.signal_price) + self.sizing.entry_fee
                 )
             except AcceptanceError as exc:
                 record.rejected[p.symbol] = exc.reason
@@ -422,11 +435,11 @@ class TradeInputRunner:
 
     def _quantity(self, p, price, cash, maximum):
         return size_quantity(
-            entry=price,
-            stop=p.stop,
+            entry=self.costs.buy_price(price),
+            stop=self.costs.sell_price(p.stop),
             entry_fee=self.sizing.entry_fee,
             exit_fee=self.sizing.exit_fee,
-            risk_budget=self.sizing.risk_budget,
+            risk_budget=self._risk_budget(),
             available_cash=cash,
             quantity_step=self.sizing.quantity_step,
             max_quantity=maximum,
@@ -439,6 +452,8 @@ class TradeInputRunner:
         self.fills.append(FillRecord(point, symbol, reason, reason=reason))
 
     def _attempt_entry(self, symbol, trade: Trade, point: int) -> None:
+        if self._enforce_risk(point):
+            return
         intent = self.pending_intents[symbol]
         proposal = intent.proposal
         adapter = deepcopy(self._adapter(symbol))
@@ -446,21 +461,24 @@ class TradeInputRunner:
         outcome = adapter.consider_entry(intent, consumed, trade)
         if outcome.status != "FILLED":
             return
+        risk_budget = self._risk_budget()
         decision = decide_bar_open_entry(
             proposal,
             point,
             outcome.price,
-            Decimal(0),
+            self.costs.buy_price(outcome.price) - outcome.price,
             self.portfolio.available_cash + intent.reserved_cash,
             entry_fee=self.sizing.entry_fee,
             exit_fee=self.sizing.exit_fee,
-            risk_budget=self.sizing.risk_budget,
+            risk_budget=risk_budget,
             quantity_step=self.sizing.quantity_step,
+            exit_slippage_bps=self.costs.adverse_bps,
         )
         if isinstance(decision, RejectedEntry):
             self._cancel(symbol, point, decision.reason)
             return
-        _, qty = decision
+        modeled_price, qty = decision
+        outcome = replace(outcome, price=modeled_price)
         transition = from_trade_outcome(
             outcome,
             instrument=symbol,
@@ -481,6 +499,7 @@ class TradeInputRunner:
             reserved_cash=intent.reserved_cash,
         )
         self.adapters[symbol] = adapter
+        self.portfolio.mark_position(symbol, trade.price)
         target = self.strategies[symbol].on_filled(transition.price)
         self.portfolio.positions[symbol].target = target
         del self.pending_intents[symbol]
@@ -495,6 +514,12 @@ class TradeInputRunner:
                 target,
                 self.sizing.entry_fee,
                 event_time_ms=trade.event_time_ms,
+                reference_id=transition.execution_reference_id,
+                reference_price=trade.price,
+                execution_cost=(transition.price - trade.price) * qty,
+                risk_budget=risk_budget,
+                estimated_stop_loss=qty * (transition.price - self.costs.sell_price(proposal.stop))
+                + self.sizing.entry_fee + self.sizing.exit_fee,
             )
         )
         if self.execution.max_hold_ms is not None:
@@ -520,6 +545,8 @@ class TradeInputRunner:
             outcome = adapter.consider_exit(position, trade)
         if outcome.status != "FILLED":
             return
+        reference_price = outcome.price
+        outcome = replace(outcome, price=self.costs.sell_price(reference_price))
         transition = from_trade_outcome(
             outcome,
             instrument=symbol,
@@ -551,5 +578,8 @@ class TradeInputRunner:
                 net_pnl=pnl,
                 reason=_EXIT_LABELS.get(outcome.reason, outcome.reason),
                 event_time_ms=trade.event_time_ms,
+                reference_id=transition.execution_reference_id,
+                reference_price=reference_price,
+                execution_cost=(reference_price - transition.price) * qty,
             )
         )

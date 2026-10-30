@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from rsys.evaluation import compare_runs
@@ -46,9 +46,9 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         raise CompareCliError(
             f"no retained manifest for run {run_id!r} under {storage_root}"
         ) from exc
-    if manifest.get("schema_version") != 2 or manifest.get("status") != "success":
+    if manifest.get("schema_version") not in (2, 3) or manifest.get("status") != "success":
         raise CompareCliError(
-            "comparison requires a successful version-2 session manifest; rerun legacy input"
+            "comparison requires a successful version-2/3 session manifest; rerun legacy input"
         )
     storage = RunStorage(storage_root)
     try:
@@ -74,6 +74,22 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         raise CompareCliError("trace is missing") from exc
     if trace_hash != manifest.get("semantic_trace_hash"):
         raise CompareCliError("trace integrity mismatch")
+    if manifest["schema_version"] == 3:
+        hashes = manifest.get("artifact_hashes", {})
+        required = {"input.json", "resolved_config.json", "fills.json", "metrics.json", "trace.jsonl"}
+        required.update(f"sessions/{day}.json" for day in manifest["session_dates"])
+        if not required <= hashes.keys() or manifest.get("metrics_scope") != "complete_attempt":
+            raise CompareCliError("incomplete multi-session evidence")
+        for name, expected in hashes.items():
+            path = PurePosixPath(name)
+            if path.is_absolute() or ".." in path.parts or "\\" in name:
+                raise CompareCliError("invalid artifact path")
+            try:
+                actual = hashlib.sha256((attempt / name).read_bytes()).hexdigest()
+            except OSError as exc:
+                raise CompareCliError("retained artifact is missing") from exc
+            if actual != expected:
+                raise CompareCliError("retained artifact integrity mismatch")
     return manifest
 
 
@@ -83,19 +99,20 @@ def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptio
     return SyntheticRunAssumptions(
         universe=tuple(manifest["universe"]),
         cost_profile=encode(
-            {k: sizing[k] for k in ("entry_fee", "exit_fee", "quantity_step")}
+            {**{k: sizing[k] for k in ("entry_fee", "exit_fee", "quantity_step")}, **manifest.get("costs", {})}
         ),
-        risk_profile=encode({k: sizing[k] for k in ("risk_budget", "max_quantity")}),
+        risk_profile=encode({**{k: sizing[k] for k in ("risk_budget", "max_quantity")}, **manifest.get("risk", {})}),
         execution_mode=encode(manifest["execution"]),
         initial_cash=str(Decimal(manifest["initial_cash"]).normalize()),
-        session_date=manifest["session_date"],
+        session_date=manifest.get("session_date", encode(manifest.get("session_dates"))),
         market_data_hash=manifest["market_data_hash"],
         scanner_profile=encode([manifest["scanner_hash"], manifest["top_n"]]),
         strategies=encode(manifest["strategies"]),
         code_hash=manifest["code_hash"],
         dependency_lock_hash=manifest["dependency_lock_hash"],
         evidence_basis=encode(
-            [
+            [manifest.get("completion_policy"), manifest.get("input_mode"),
+             *[
                 manifest[k]
                 for k in (
                     "evidence_type",
@@ -104,7 +121,7 @@ def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptio
                     "scanner_basis",
                     "account_basis",
                 )
-            ]
+            ]]
         ),
     )
 

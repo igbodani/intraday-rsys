@@ -93,13 +93,14 @@ def resize_at_fill(
     exit_fee: Decimal,
     risk_budget: Decimal | None,
     quantity_step: Decimal,
+    exit_slippage_bps: Decimal = Decimal(0),
 ) -> tuple[Decimal, Decimal]:
     """Shared fill-time resize: the real engine must recheck cash/risk against the actual
     modeled price and current cash, never upsizing past the originally accepted quantity.
     Raises `AcceptanceError` (from `size_quantity`) on an unaffordable or over-risk gap."""
     return size_quantity(
         entry=modeled_price,
-        stop=proposal.stop,
+        stop=proposal.stop * (1 - exit_slippage_bps / 10000),
         entry_fee=entry_fee,
         exit_fee=exit_fee,
         risk_budget=risk_budget,
@@ -120,13 +121,14 @@ def decide_bar_open_entry(
     exit_fee: Decimal,
     risk_budget: Decimal | None,
     quantity_step: Decimal,
+    exit_slippage_bps: Decimal = Decimal(0),
 ) -> tuple[Decimal, Decimal] | RejectedEntry:
     """Models the fill at `open_price + slippage` (slippage is 0 for an engine that does
     not declare an adverse-slippage cost). Returns `(modeled_price, quantity)` on a fill or
     a `RejectedEntry` naming the reason. Does not decide expiry or activation-readiness --
     those stay in each engine's own declared control flow."""
     modeled_price = open_price + slippage
-    if proposal.stop is not None and modeled_price <= proposal.stop:
+    if proposal.stop is not None and (open_price <= proposal.stop or modeled_price <= proposal.stop):
         return RejectedEntry(ENTRY_THROUGH_STOP)
     try:
         quantity, _ = resize_at_fill(
@@ -137,6 +139,7 @@ def decide_bar_open_entry(
             exit_fee=exit_fee,
             risk_budget=risk_budget,
             quantity_step=quantity_step,
+            exit_slippage_bps=exit_slippage_bps,
         )
     except AcceptanceError as exc:
         return RejectedEntry(exc.reason)

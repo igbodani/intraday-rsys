@@ -2,8 +2,8 @@
 step 9, report subset). Reads manifest.json + trace.jsonl only; no external assets or
 network call is required to open the rendered file.
 
-Honesty note: renders only `run_cli.py`'s synthetic `StandaloneRunner` manifests/traces,
-not `rsys replay` attempts -- see docs/M2_IMPLEMENTATION_STATUS.md.
+Renders legacy synthetic bar runs and version-3 bar/trade session manifests, including
+partial failures. Data-only `rsys replay` attempts use their own evidence format.
 """
 
 from __future__ import annotations
@@ -35,7 +35,9 @@ def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]
         records = [json.loads(line) for line in lines if line]
     except json.JSONDecodeError as exc:
         raise ReportError("trace is not valid JSONL") from exc
-    if manifest.get("status", "success") != "success" or "metrics" not in manifest:
+    if manifest.get("schema_version") != 3 and (
+        manifest.get("status", "success") != "success" or "metrics" not in manifest
+    ):
         raise ReportError("attempt did not complete successfully")
     return manifest, records
 
@@ -53,14 +55,14 @@ def _metrics_table(metrics: dict[str, Any]) -> str:
 
 def _decisions_table(records: list[dict[str, Any]]) -> str:
     by_time = {
-        r["available_at_ms"]: r
+        (r.get("session_date", ""), r["available_at_ms"]): r
         for r in records
         if r.get("kind") in ("decision", "accept")
     }
     decisions = [by_time[t] for t in sorted(by_time)]
-    header = "<tr><th>time (ms)</th><th>candidates</th><th>proposed</th><th>accepted</th><th>rejected</th></tr>"
+    header = "<tr><th>session</th><th>time (ms)</th><th>candidates</th><th>proposed</th><th>accepted</th><th>rejected</th></tr>"
     rows = "".join(
-        f"<tr><td>{_esc(d['available_at_ms'])}</td><td>{_esc(d['candidates'])}</td>"
+        f"<tr><td>{_esc(d.get('session_date', ''))}</td><td>{_esc(d['available_at_ms'])}</td><td>{_esc(d['candidates'])}</td>"
         f"<td>{_esc(d['proposed'])}</td><td>{_esc(d['accepted'])}</td><td>{_esc(d['rejected'])}</td></tr>"
         for d in decisions
     )
@@ -69,22 +71,40 @@ def _decisions_table(records: list[dict[str, Any]]) -> str:
 
 def _fills_table(records: list[dict[str, Any]]) -> str:
     fills = [r for r in records if r.get("kind") == "fill"]
-    header = "<tr><th>time (ms)</th><th>symbol</th><th>status</th><th>price</th><th>quantity</th><th>target</th></tr>"
+    header = "<tr><th>session</th><th>time (ms)</th><th>symbol</th><th>status</th><th>price</th><th>quantity</th><th>target</th><th>reference</th><th>fee</th><th>execution cost</th><th>reason</th></tr>"
     rows = "".join(
-        f"<tr><td>{_esc(f['available_at_ms'])}</td><td>{_esc(f['symbol'])}</td><td>{_esc(f['status'])}</td>"
-        f"<td>{_esc(f.get('price'))}</td><td>{_esc(f.get('quantity'))}</td><td>{_esc(f.get('target'))}</td></tr>"
+        f"<tr><td>{_esc(f.get('session_date', ''))}</td><td>{_esc(f['available_at_ms'])}</td><td>{_esc(f['symbol'])}</td><td>{_esc(f['status'])}</td>"
+        f"<td>{_esc(f.get('price'))}</td><td>{_esc(f.get('quantity'))}</td><td>{_esc(f.get('target'))}</td>"
+        f"<td>{_esc(f.get('reference_id'))}</td><td>{_esc(f.get('fee'))}</td><td>{_esc(f.get('execution_cost'))}</td><td>{_esc(f.get('reason'))}</td></tr>"
         for f in fills
     )
     return f"<table><caption>Fills ({len(fills)})</caption><thead>{header}</thead><tbody>{rows}</tbody></table>"
 
 
 def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> str:
-    trade_count = manifest["metrics"]["completed_trade_count"]
+    metrics = manifest.get("metrics", {})
+    trade_count = metrics.get("completed_trade_count", 0)
     status_label = (
         "no completed trades"
         if trade_count == 0
         else f"{trade_count} completed trade(s)"
     )
+    if manifest.get("status", "success") != "success":
+        status_label = f"{manifest['status']} — partial diagnostics only; {status_label}"
+    sessions = manifest.get("sessions", [])
+    sessions_table = ""
+    if sessions:
+        rows = "".join(
+            f"<tr><td>{_esc(s['session_date'])}</td><td>{_esc(s['status'])}</td>"
+            f"<td>{_esc(s.get('starting_equity', 'unavailable'))}</td><td>{_esc(s.get('ending_equity', 'unavailable'))}</td>"
+            f"<td>{_esc(s.get('risk_state', {}).get('halt_reason'))}</td><td>{_esc(s.get('error', ''))}</td></tr>"
+            for s in sessions
+        )
+        sessions_table = "<table><caption>Sessions</caption><thead><tr><th>date</th><th>status</th><th>starting equity</th><th>ending equity</th><th>entry halt</th><th>error</th></tr></thead><tbody>" + rows + "</tbody></table>"
+    details = ""
+    for key in ("error", "risk", "costs", "execution", "risk_state", "multi_session_metrics"):
+        if key in manifest:
+            details += f"<h2>{_esc(key)}</h2><pre>{_esc(json.dumps(manifest[key], indent=2, default=str))}</pre>"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -99,16 +119,19 @@ th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left; }}
 </style>
 </head>
 <body>
-<h1>Synthetic StandaloneRunner session -- run {_esc(manifest["run_id"])}</h1>
+<h1>Synthetic account execution — run {_esc(manifest["run_id"])}</h1>
 <p><em>Synthetic, offline evidence; not a market-performance claim. Status: {_esc(status_label)}.</em></p>
 <p class="summary">
 <span>Universe: {_esc(manifest.get("universe"))}</span>
-<span>Starting equity: {_esc(manifest["starting_equity"])}</span>
-<span>Ending equity: {_esc(manifest["ending_equity"])}</span>
+<span>Starting equity: {_esc(manifest.get("starting_equity", "unavailable"))}</span>
+<span>Ending equity: {_esc(manifest.get("ending_equity", "unavailable"))}</span>
 </p>
-{_metrics_table(manifest["metrics"])}
+<p>Metrics scope: {_esc(manifest.get("metrics_scope", "complete_attempt"))}. Multi-session drawdown uses session-end equity; exposure uses scheduled regular hours. Neither establishes complete market-data coverage.</p>
+{_metrics_table(metrics)}
+{sessions_table}
 {_decisions_table(records)}
 {_fills_table(records)}
+{details}
 </body>
 </html>
 """

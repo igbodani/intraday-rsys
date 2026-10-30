@@ -1,0 +1,471 @@
+{
+  "schema_version": 2,
+  "evidence_type": "synthetic_sessions",
+  "initial_cash": "1000",
+  "top_n": 20,
+  "completion_policy": "require_flat",
+  "sizing": {
+    "quantity_step": "1",
+    "max_quantity": null
+  },
+  "risk": {
+    "per_trade_fraction": "0.03",
+    "daily_loss_fraction": "0.05",
+    "maximum_drawdown_fraction": "0.20",
+    "daily_loss_basis": "session_start_equity",
+    "halt_action": "cancel_entries_keep_exits"
+  },
+  "costs": {
+    "adverse_bps": "5",
+    "feed_delay_ms": 250,
+    "entry_fee": "0",
+    "exit_fee": "0"
+  },
+  "execution": {
+    "decision_latency_ms": 0,
+    "max_hold_ms": 3600000
+  },
+  "input_mode": "bar",
+  "sessions": [
+    {
+      "date": "2024-11-29",
+      "flatten_at": "09:48:05",
+      "symbols": {
+        "AAA": {
+          "strategy": "orb_close_cross_v1",
+          "session_open": "09:30:00",
+          "bars": [
+            {
+              "bar_start": "2024-11-29T09:30:00",
+              "bar_end": "2024-11-29T09:31:00",
+              "available_at": "2024-11-29T09:31:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:31:00",
+              "bar_end": "2024-11-29T09:32:00",
+              "available_at": "2024-11-29T09:32:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:32:00",
+              "bar_end": "2024-11-29T09:33:00",
+              "available_at": "2024-11-29T09:33:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:33:00",
+              "bar_end": "2024-11-29T09:34:00",
+              "available_at": "2024-11-29T09:34:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:34:00",
+              "bar_end": "2024-11-29T09:35:00",
+              "available_at": "2024-11-29T09:35:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:35:00",
+              "bar_end": "2024-11-29T09:36:00",
+              "available_at": "2024-11-29T09:36:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:36:00",
+              "bar_end": "2024-11-29T09:37:00",
+              "available_at": "2024-11-29T09:37:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:37:00",
+              "bar_end": "2024-11-29T09:38:00",
+              "available_at": "2024-11-29T09:38:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:38:00",
+              "bar_end": "2024-11-29T09:39:00",
+              "available_at": "2024-11-29T09:39:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:39:00",
+              "bar_end": "2024-11-29T09:40:00",
+              "available_at": "2024-11-29T09:40:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:40:00",
+              "bar_end": "2024-11-29T09:41:00",
+              "available_at": "2024-11-29T09:41:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:41:00",
+              "bar_end": "2024-11-29T09:42:00",
+              "available_at": "2024-11-29T09:42:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:42:00",
+              "bar_end": "2024-11-29T09:43:00",
+              "available_at": "2024-11-29T09:43:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:43:00",
+              "bar_end": "2024-11-29T09:44:00",
+              "available_at": "2024-11-29T09:44:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:44:00",
+              "bar_end": "2024-11-29T09:45:00",
+              "available_at": "2024-11-29T09:45:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:45:00",
+              "bar_end": "2024-11-29T09:46:00",
+              "available_at": "2024-11-29T09:46:00",
+              "open": "100",
+              "high": "102",
+              "low": "100",
+              "close": "101.02",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:46:00",
+              "bar_end": "2024-11-29T09:47:00",
+              "available_at": "2024-11-29T09:47:00",
+              "open": "102",
+              "high": "102.1",
+              "low": "101.9",
+              "close": "102",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:47:00",
+              "bar_end": "2024-11-29T09:48:00",
+              "available_at": "2024-11-29T09:48:00",
+              "open": "102.5",
+              "high": "102.6",
+              "low": "102.4",
+              "close": "102.5",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:48:00",
+              "bar_end": "2024-11-29T09:49:00",
+              "available_at": "2024-11-29T09:49:00",
+              "open": "104",
+              "high": "104.1",
+              "low": "103.9",
+              "close": "104",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-11-29T09:49:00",
+              "bar_end": "2024-11-29T09:50:00",
+              "available_at": "2024-11-29T09:50:00",
+              "open": "104",
+              "high": "104.1",
+              "low": "103.9",
+              "close": "104",
+              "volume": "100"
+            }
+          ]
+        }
+      },
+      "scanner_inputs": {
+        "09:46:00": {
+          "AAA": {
+            "rvol": "2",
+            "gain": "0.03"
+          }
+        }
+      }
+    },
+    {
+      "date": "2024-12-02",
+      "flatten_at": "09:48:05",
+      "symbols": {
+        "AAA": {
+          "strategy": "orb_close_cross_v1",
+          "session_open": "09:30:00",
+          "bars": [
+            {
+              "bar_start": "2024-12-02T09:30:00",
+              "bar_end": "2024-12-02T09:31:00",
+              "available_at": "2024-12-02T09:31:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:31:00",
+              "bar_end": "2024-12-02T09:32:00",
+              "available_at": "2024-12-02T09:32:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:32:00",
+              "bar_end": "2024-12-02T09:33:00",
+              "available_at": "2024-12-02T09:33:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:33:00",
+              "bar_end": "2024-12-02T09:34:00",
+              "available_at": "2024-12-02T09:34:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:34:00",
+              "bar_end": "2024-12-02T09:35:00",
+              "available_at": "2024-12-02T09:35:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:35:00",
+              "bar_end": "2024-12-02T09:36:00",
+              "available_at": "2024-12-02T09:36:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:36:00",
+              "bar_end": "2024-12-02T09:37:00",
+              "available_at": "2024-12-02T09:37:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:37:00",
+              "bar_end": "2024-12-02T09:38:00",
+              "available_at": "2024-12-02T09:38:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:38:00",
+              "bar_end": "2024-12-02T09:39:00",
+              "available_at": "2024-12-02T09:39:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:39:00",
+              "bar_end": "2024-12-02T09:40:00",
+              "available_at": "2024-12-02T09:40:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:40:00",
+              "bar_end": "2024-12-02T09:41:00",
+              "available_at": "2024-12-02T09:41:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:41:00",
+              "bar_end": "2024-12-02T09:42:00",
+              "available_at": "2024-12-02T09:42:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:42:00",
+              "bar_end": "2024-12-02T09:43:00",
+              "available_at": "2024-12-02T09:43:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:43:00",
+              "bar_end": "2024-12-02T09:44:00",
+              "available_at": "2024-12-02T09:44:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:44:00",
+              "bar_end": "2024-12-02T09:45:00",
+              "available_at": "2024-12-02T09:45:00",
+              "open": "100",
+              "high": "101",
+              "low": "99",
+              "close": "100",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:45:00",
+              "bar_end": "2024-12-02T09:46:00",
+              "available_at": "2024-12-02T09:46:00",
+              "open": "100",
+              "high": "102",
+              "low": "100",
+              "close": "101.02",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:46:00",
+              "bar_end": "2024-12-02T09:47:00",
+              "available_at": "2024-12-02T09:47:00",
+              "open": "102",
+              "high": "102.1",
+              "low": "101.9",
+              "close": "102",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:47:00",
+              "bar_end": "2024-12-02T09:48:00",
+              "available_at": "2024-12-02T09:48:00",
+              "open": "102.5",
+              "high": "102.6",
+              "low": "102.4",
+              "close": "102.5",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:48:00",
+              "bar_end": "2024-12-02T09:49:00",
+              "available_at": "2024-12-02T09:49:00",
+              "open": "104",
+              "high": "104.1",
+              "low": "103.9",
+              "close": "104",
+              "volume": "100"
+            },
+            {
+              "bar_start": "2024-12-02T09:49:00",
+              "bar_end": "2024-12-02T09:50:00",
+              "available_at": "2024-12-02T09:50:00",
+              "open": "104",
+              "high": "104.1",
+              "low": "103.9",
+              "close": "104",
+              "volume": "100"
+            }
+          ]
+        }
+      },
+      "scanner_inputs": {
+        "09:46:00": {
+          "AAA": {
+            "rvol": "2",
+            "gain": "0.03"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -33,6 +33,7 @@ from rsys.calendar import (
 )
 from rsys.money import amount, ceil_step, floor_step
 from rsys.portfolio import Portfolio
+from rsys.risk_policy import ExecutionCosts, RiskMonitor
 from rsys.standalone_run import (
     DecisionRecord,
     ExecutionPolicy,
@@ -87,15 +88,23 @@ class SessionCoordinator:
         *,
         execution_factory: Callable[[date], ExecutionPolicy] | None = None,
         top_n: int = 20,
+        runner_factory: Callable = StandaloneRunner,
+        risk: RiskMonitor | None = None,
+        costs: ExecutionCosts | None = None,
     ):
         self.strategy_factory = strategy_factory
         self.portfolio = portfolio
         self.sizing = sizing
         self.execution_factory = execution_factory or (lambda _session_date: ExecutionPolicy())
         self.top_n = top_n
+        self.runner_factory = runner_factory
+        self.risk = risk
+        self.costs = costs
+        self.last_runner = None
         self.results: list[SessionResult] = []
         self._last_attempted_date: date | None = None
         self._failed = False
+        self._last_available_ns: int | None = None
 
     def apply_split(self, action: SplitAction) -> None:
         """Apply `action` to any currently open position in `action.symbol`. Raises
@@ -133,6 +142,7 @@ class SessionCoordinator:
         session_date: date,
         bars_by_symbol: dict[str, list],
         scanner_inputs: dict[int, dict],
+        corrections_by_symbol: dict | None = None,
     ) -> StandaloneRunner:
         """Run one calendar session. Raises `CalendarCoverageError` for a non-trading day,
         `UnreconciledPositionError` if a position survived from a prior session, and
@@ -146,6 +156,9 @@ class SessionCoordinator:
             raise ValueError("session dates must be strictly increasing; duplicate sessions are forbidden")
         if self._failed:
             raise ValueError("a failed session requires a fresh coordinator and reconciled account")
+        opening_ns = int(session_open_utc(session_date).timestamp()) * 1_000_000_000
+        if self._last_available_ns is not None and self._last_available_ns >= opening_ns:
+            raise IncompleteSessionError("prior session execution clock overlaps the next session open")
         if self.portfolio.positions:
             raise UnreconciledPositionError(
                 f"{session_date.isoformat()} cannot start a new session with open "
@@ -154,22 +167,30 @@ class SessionCoordinator:
             )
         strategies = self.strategy_factory(session_date)
         execution = self.execution_factory(session_date)
-        runner = StandaloneRunner(
+        runner = self.runner_factory(
             strategies,
             self.portfolio,
             self.sizing,
             execution=execution,
             top_n=self.top_n,
             session_date=session_date.isoformat(),
+            risk=self.risk,
+            costs=self.costs,
         )
+        self.last_runner = runner
         # A runtime failure may have committed account transitions. Never silently retry
         # or advance that partially executed account as a successful session.
         self._last_attempted_date = session_date
         try:
-            runner.run_session(bars_by_symbol, scanner_inputs)
-        except Exception:
+            if corrections_by_symbol is None:
+                runner.run_session(bars_by_symbol, scanner_inputs)
+            else:
+                runner.run_session(bars_by_symbol, scanner_inputs, corrections_by_symbol)
+        except BaseException:
             self._failed = True
             raise
+        if runner.trace:
+            self._last_available_ns = runner.trace[-1]["available_at_ns"]
         self.results.append(
             SessionResult(
                 session_date=session_date,

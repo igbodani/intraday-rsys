@@ -1,0 +1,1991 @@
+{
+  "schema_version": 2,
+  "evidence_type": "synthetic_sessions",
+  "initial_cash": "1000",
+  "top_n": 20,
+  "completion_policy": "require_flat",
+  "sizing": {
+    "quantity_step": "1",
+    "max_quantity": null
+  },
+  "risk": {
+    "per_trade_fraction": "0.03",
+    "daily_loss_fraction": "0.05",
+    "maximum_drawdown_fraction": "0.20",
+    "daily_loss_basis": "session_start_equity",
+    "halt_action": "cancel_entries_keep_exits"
+  },
+  "costs": {
+    "adverse_bps": "5",
+    "feed_delay_ms": 250,
+    "entry_fee": "0",
+    "exit_fee": "0"
+  },
+  "execution": {
+    "decision_latency_ms": 0,
+    "max_hold_ms": 3600000
+  },
+  "input_mode": "trade",
+  "sessions": [
+    {
+      "date": "2024-11-29",
+      "flatten_at": "09:48:05",
+      "symbols": {
+        "AAA": {
+          "strategy": "orb_close_cross_v1",
+          "session_open": "09:30:00",
+          "trades": [
+            {
+              "trade_id": "AAA:0:0",
+              "event_time": "2024-11-29T09:30:00",
+              "available_at": "2024-11-29T09:30:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:1",
+              "event_time": "2024-11-29T09:30:15",
+              "available_at": "2024-11-29T09:30:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:2",
+              "event_time": "2024-11-29T09:30:30",
+              "available_at": "2024-11-29T09:30:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:3",
+              "event_time": "2024-11-29T09:30:45",
+              "available_at": "2024-11-29T09:30:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:0",
+              "event_time": "2024-11-29T09:31:00",
+              "available_at": "2024-11-29T09:31:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:1",
+              "event_time": "2024-11-29T09:31:15",
+              "available_at": "2024-11-29T09:31:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:2",
+              "event_time": "2024-11-29T09:31:30",
+              "available_at": "2024-11-29T09:31:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:3",
+              "event_time": "2024-11-29T09:31:45",
+              "available_at": "2024-11-29T09:31:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:0",
+              "event_time": "2024-11-29T09:32:00",
+              "available_at": "2024-11-29T09:32:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:1",
+              "event_time": "2024-11-29T09:32:15",
+              "available_at": "2024-11-29T09:32:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:2",
+              "event_time": "2024-11-29T09:32:30",
+              "available_at": "2024-11-29T09:32:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:3",
+              "event_time": "2024-11-29T09:32:45",
+              "available_at": "2024-11-29T09:32:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:0",
+              "event_time": "2024-11-29T09:33:00",
+              "available_at": "2024-11-29T09:33:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:1",
+              "event_time": "2024-11-29T09:33:15",
+              "available_at": "2024-11-29T09:33:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:2",
+              "event_time": "2024-11-29T09:33:30",
+              "available_at": "2024-11-29T09:33:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:3",
+              "event_time": "2024-11-29T09:33:45",
+              "available_at": "2024-11-29T09:33:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:0",
+              "event_time": "2024-11-29T09:34:00",
+              "available_at": "2024-11-29T09:34:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:1",
+              "event_time": "2024-11-29T09:34:15",
+              "available_at": "2024-11-29T09:34:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:2",
+              "event_time": "2024-11-29T09:34:30",
+              "available_at": "2024-11-29T09:34:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:3",
+              "event_time": "2024-11-29T09:34:45",
+              "available_at": "2024-11-29T09:34:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:0",
+              "event_time": "2024-11-29T09:35:00",
+              "available_at": "2024-11-29T09:35:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:1",
+              "event_time": "2024-11-29T09:35:15",
+              "available_at": "2024-11-29T09:35:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:2",
+              "event_time": "2024-11-29T09:35:30",
+              "available_at": "2024-11-29T09:35:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:3",
+              "event_time": "2024-11-29T09:35:45",
+              "available_at": "2024-11-29T09:35:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:0",
+              "event_time": "2024-11-29T09:36:00",
+              "available_at": "2024-11-29T09:36:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:1",
+              "event_time": "2024-11-29T09:36:15",
+              "available_at": "2024-11-29T09:36:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:2",
+              "event_time": "2024-11-29T09:36:30",
+              "available_at": "2024-11-29T09:36:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:3",
+              "event_time": "2024-11-29T09:36:45",
+              "available_at": "2024-11-29T09:36:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:0",
+              "event_time": "2024-11-29T09:37:00",
+              "available_at": "2024-11-29T09:37:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:1",
+              "event_time": "2024-11-29T09:37:15",
+              "available_at": "2024-11-29T09:37:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:2",
+              "event_time": "2024-11-29T09:37:30",
+              "available_at": "2024-11-29T09:37:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:3",
+              "event_time": "2024-11-29T09:37:45",
+              "available_at": "2024-11-29T09:37:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:0",
+              "event_time": "2024-11-29T09:38:00",
+              "available_at": "2024-11-29T09:38:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:1",
+              "event_time": "2024-11-29T09:38:15",
+              "available_at": "2024-11-29T09:38:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:2",
+              "event_time": "2024-11-29T09:38:30",
+              "available_at": "2024-11-29T09:38:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:3",
+              "event_time": "2024-11-29T09:38:45",
+              "available_at": "2024-11-29T09:38:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:0",
+              "event_time": "2024-11-29T09:39:00",
+              "available_at": "2024-11-29T09:39:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:1",
+              "event_time": "2024-11-29T09:39:15",
+              "available_at": "2024-11-29T09:39:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:2",
+              "event_time": "2024-11-29T09:39:30",
+              "available_at": "2024-11-29T09:39:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:3",
+              "event_time": "2024-11-29T09:39:45",
+              "available_at": "2024-11-29T09:39:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:0",
+              "event_time": "2024-11-29T09:40:00",
+              "available_at": "2024-11-29T09:40:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:1",
+              "event_time": "2024-11-29T09:40:15",
+              "available_at": "2024-11-29T09:40:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:2",
+              "event_time": "2024-11-29T09:40:30",
+              "available_at": "2024-11-29T09:40:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:3",
+              "event_time": "2024-11-29T09:40:45",
+              "available_at": "2024-11-29T09:40:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:0",
+              "event_time": "2024-11-29T09:41:00",
+              "available_at": "2024-11-29T09:41:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:1",
+              "event_time": "2024-11-29T09:41:15",
+              "available_at": "2024-11-29T09:41:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:2",
+              "event_time": "2024-11-29T09:41:30",
+              "available_at": "2024-11-29T09:41:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:3",
+              "event_time": "2024-11-29T09:41:45",
+              "available_at": "2024-11-29T09:41:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:0",
+              "event_time": "2024-11-29T09:42:00",
+              "available_at": "2024-11-29T09:42:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:1",
+              "event_time": "2024-11-29T09:42:15",
+              "available_at": "2024-11-29T09:42:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:2",
+              "event_time": "2024-11-29T09:42:30",
+              "available_at": "2024-11-29T09:42:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:3",
+              "event_time": "2024-11-29T09:42:45",
+              "available_at": "2024-11-29T09:42:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:0",
+              "event_time": "2024-11-29T09:43:00",
+              "available_at": "2024-11-29T09:43:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:1",
+              "event_time": "2024-11-29T09:43:15",
+              "available_at": "2024-11-29T09:43:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:2",
+              "event_time": "2024-11-29T09:43:30",
+              "available_at": "2024-11-29T09:43:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:3",
+              "event_time": "2024-11-29T09:43:45",
+              "available_at": "2024-11-29T09:43:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:0",
+              "event_time": "2024-11-29T09:44:00",
+              "available_at": "2024-11-29T09:44:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:1",
+              "event_time": "2024-11-29T09:44:15",
+              "available_at": "2024-11-29T09:44:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:2",
+              "event_time": "2024-11-29T09:44:30",
+              "available_at": "2024-11-29T09:44:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:3",
+              "event_time": "2024-11-29T09:44:45",
+              "available_at": "2024-11-29T09:44:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:0",
+              "event_time": "2024-11-29T09:45:00",
+              "available_at": "2024-11-29T09:45:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:1",
+              "event_time": "2024-11-29T09:45:15",
+              "available_at": "2024-11-29T09:45:15",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:2",
+              "event_time": "2024-11-29T09:45:30",
+              "available_at": "2024-11-29T09:45:30",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:3",
+              "event_time": "2024-11-29T09:45:45",
+              "available_at": "2024-11-29T09:45:45",
+              "price": "101.02",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:0",
+              "event_time": "2024-11-29T09:46:00",
+              "available_at": "2024-11-29T09:46:00",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:1",
+              "event_time": "2024-11-29T09:46:15",
+              "available_at": "2024-11-29T09:46:15",
+              "price": "102.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:2",
+              "event_time": "2024-11-29T09:46:30",
+              "available_at": "2024-11-29T09:46:30",
+              "price": "101.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:3",
+              "event_time": "2024-11-29T09:46:45",
+              "available_at": "2024-11-29T09:46:45",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:0",
+              "event_time": "2024-11-29T09:47:00",
+              "available_at": "2024-11-29T09:47:00",
+              "price": "102.5",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:1",
+              "event_time": "2024-11-29T09:47:15",
+              "available_at": "2024-11-29T09:47:15",
+              "price": "102.6",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:2",
+              "event_time": "2024-11-29T09:47:30",
+              "available_at": "2024-11-29T09:47:30",
+              "price": "102.4",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:3",
+              "event_time": "2024-11-29T09:47:45",
+              "available_at": "2024-11-29T09:47:45",
+              "price": "102.5",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:0",
+              "event_time": "2024-11-29T09:48:00",
+              "available_at": "2024-11-29T09:48:00",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:1",
+              "event_time": "2024-11-29T09:48:15",
+              "available_at": "2024-11-29T09:48:15",
+              "price": "104.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:2",
+              "event_time": "2024-11-29T09:48:30",
+              "available_at": "2024-11-29T09:48:30",
+              "price": "103.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:3",
+              "event_time": "2024-11-29T09:48:45",
+              "available_at": "2024-11-29T09:48:45",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:0",
+              "event_time": "2024-11-29T09:49:00",
+              "available_at": "2024-11-29T09:49:00",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:1",
+              "event_time": "2024-11-29T09:49:15",
+              "available_at": "2024-11-29T09:49:15",
+              "price": "104.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:2",
+              "event_time": "2024-11-29T09:49:30",
+              "available_at": "2024-11-29T09:49:30",
+              "price": "103.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:3",
+              "event_time": "2024-11-29T09:49:45",
+              "available_at": "2024-11-29T09:49:45",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            }
+          ]
+        }
+      },
+      "scanner_inputs": {
+        "09:46:00": {
+          "AAA": {
+            "rvol": "2",
+            "gain": "0.03"
+          }
+        }
+      }
+    },
+    {
+      "date": "2024-12-02",
+      "flatten_at": "09:48:05",
+      "symbols": {
+        "AAA": {
+          "strategy": "orb_close_cross_v1",
+          "session_open": "09:30:00",
+          "trades": [
+            {
+              "trade_id": "AAA:0:0",
+              "event_time": "2024-12-02T09:30:00",
+              "available_at": "2024-12-02T09:30:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:1",
+              "event_time": "2024-12-02T09:30:15",
+              "available_at": "2024-12-02T09:30:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:2",
+              "event_time": "2024-12-02T09:30:30",
+              "available_at": "2024-12-02T09:30:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:0:3",
+              "event_time": "2024-12-02T09:30:45",
+              "available_at": "2024-12-02T09:30:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:0",
+              "event_time": "2024-12-02T09:31:00",
+              "available_at": "2024-12-02T09:31:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:1",
+              "event_time": "2024-12-02T09:31:15",
+              "available_at": "2024-12-02T09:31:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:2",
+              "event_time": "2024-12-02T09:31:30",
+              "available_at": "2024-12-02T09:31:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:1:3",
+              "event_time": "2024-12-02T09:31:45",
+              "available_at": "2024-12-02T09:31:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:0",
+              "event_time": "2024-12-02T09:32:00",
+              "available_at": "2024-12-02T09:32:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:1",
+              "event_time": "2024-12-02T09:32:15",
+              "available_at": "2024-12-02T09:32:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:2",
+              "event_time": "2024-12-02T09:32:30",
+              "available_at": "2024-12-02T09:32:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:2:3",
+              "event_time": "2024-12-02T09:32:45",
+              "available_at": "2024-12-02T09:32:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:0",
+              "event_time": "2024-12-02T09:33:00",
+              "available_at": "2024-12-02T09:33:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:1",
+              "event_time": "2024-12-02T09:33:15",
+              "available_at": "2024-12-02T09:33:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:2",
+              "event_time": "2024-12-02T09:33:30",
+              "available_at": "2024-12-02T09:33:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:3:3",
+              "event_time": "2024-12-02T09:33:45",
+              "available_at": "2024-12-02T09:33:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:0",
+              "event_time": "2024-12-02T09:34:00",
+              "available_at": "2024-12-02T09:34:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:1",
+              "event_time": "2024-12-02T09:34:15",
+              "available_at": "2024-12-02T09:34:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:2",
+              "event_time": "2024-12-02T09:34:30",
+              "available_at": "2024-12-02T09:34:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:4:3",
+              "event_time": "2024-12-02T09:34:45",
+              "available_at": "2024-12-02T09:34:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:0",
+              "event_time": "2024-12-02T09:35:00",
+              "available_at": "2024-12-02T09:35:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:1",
+              "event_time": "2024-12-02T09:35:15",
+              "available_at": "2024-12-02T09:35:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:2",
+              "event_time": "2024-12-02T09:35:30",
+              "available_at": "2024-12-02T09:35:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:5:3",
+              "event_time": "2024-12-02T09:35:45",
+              "available_at": "2024-12-02T09:35:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:0",
+              "event_time": "2024-12-02T09:36:00",
+              "available_at": "2024-12-02T09:36:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:1",
+              "event_time": "2024-12-02T09:36:15",
+              "available_at": "2024-12-02T09:36:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:2",
+              "event_time": "2024-12-02T09:36:30",
+              "available_at": "2024-12-02T09:36:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:6:3",
+              "event_time": "2024-12-02T09:36:45",
+              "available_at": "2024-12-02T09:36:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:0",
+              "event_time": "2024-12-02T09:37:00",
+              "available_at": "2024-12-02T09:37:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:1",
+              "event_time": "2024-12-02T09:37:15",
+              "available_at": "2024-12-02T09:37:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:2",
+              "event_time": "2024-12-02T09:37:30",
+              "available_at": "2024-12-02T09:37:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:7:3",
+              "event_time": "2024-12-02T09:37:45",
+              "available_at": "2024-12-02T09:37:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:0",
+              "event_time": "2024-12-02T09:38:00",
+              "available_at": "2024-12-02T09:38:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:1",
+              "event_time": "2024-12-02T09:38:15",
+              "available_at": "2024-12-02T09:38:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:2",
+              "event_time": "2024-12-02T09:38:30",
+              "available_at": "2024-12-02T09:38:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:8:3",
+              "event_time": "2024-12-02T09:38:45",
+              "available_at": "2024-12-02T09:38:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:0",
+              "event_time": "2024-12-02T09:39:00",
+              "available_at": "2024-12-02T09:39:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:1",
+              "event_time": "2024-12-02T09:39:15",
+              "available_at": "2024-12-02T09:39:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:2",
+              "event_time": "2024-12-02T09:39:30",
+              "available_at": "2024-12-02T09:39:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:9:3",
+              "event_time": "2024-12-02T09:39:45",
+              "available_at": "2024-12-02T09:39:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:0",
+              "event_time": "2024-12-02T09:40:00",
+              "available_at": "2024-12-02T09:40:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:1",
+              "event_time": "2024-12-02T09:40:15",
+              "available_at": "2024-12-02T09:40:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:2",
+              "event_time": "2024-12-02T09:40:30",
+              "available_at": "2024-12-02T09:40:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:10:3",
+              "event_time": "2024-12-02T09:40:45",
+              "available_at": "2024-12-02T09:40:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:0",
+              "event_time": "2024-12-02T09:41:00",
+              "available_at": "2024-12-02T09:41:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:1",
+              "event_time": "2024-12-02T09:41:15",
+              "available_at": "2024-12-02T09:41:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:2",
+              "event_time": "2024-12-02T09:41:30",
+              "available_at": "2024-12-02T09:41:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:11:3",
+              "event_time": "2024-12-02T09:41:45",
+              "available_at": "2024-12-02T09:41:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:0",
+              "event_time": "2024-12-02T09:42:00",
+              "available_at": "2024-12-02T09:42:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:1",
+              "event_time": "2024-12-02T09:42:15",
+              "available_at": "2024-12-02T09:42:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:2",
+              "event_time": "2024-12-02T09:42:30",
+              "available_at": "2024-12-02T09:42:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:12:3",
+              "event_time": "2024-12-02T09:42:45",
+              "available_at": "2024-12-02T09:42:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:0",
+              "event_time": "2024-12-02T09:43:00",
+              "available_at": "2024-12-02T09:43:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:1",
+              "event_time": "2024-12-02T09:43:15",
+              "available_at": "2024-12-02T09:43:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:2",
+              "event_time": "2024-12-02T09:43:30",
+              "available_at": "2024-12-02T09:43:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:13:3",
+              "event_time": "2024-12-02T09:43:45",
+              "available_at": "2024-12-02T09:43:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:0",
+              "event_time": "2024-12-02T09:44:00",
+              "available_at": "2024-12-02T09:44:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:1",
+              "event_time": "2024-12-02T09:44:15",
+              "available_at": "2024-12-02T09:44:15",
+              "price": "101",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:2",
+              "event_time": "2024-12-02T09:44:30",
+              "available_at": "2024-12-02T09:44:30",
+              "price": "99",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:14:3",
+              "event_time": "2024-12-02T09:44:45",
+              "available_at": "2024-12-02T09:44:45",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:0",
+              "event_time": "2024-12-02T09:45:00",
+              "available_at": "2024-12-02T09:45:00",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:1",
+              "event_time": "2024-12-02T09:45:15",
+              "available_at": "2024-12-02T09:45:15",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:2",
+              "event_time": "2024-12-02T09:45:30",
+              "available_at": "2024-12-02T09:45:30",
+              "price": "100",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:15:3",
+              "event_time": "2024-12-02T09:45:45",
+              "available_at": "2024-12-02T09:45:45",
+              "price": "101.02",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:0",
+              "event_time": "2024-12-02T09:46:00",
+              "available_at": "2024-12-02T09:46:00",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:1",
+              "event_time": "2024-12-02T09:46:15",
+              "available_at": "2024-12-02T09:46:15",
+              "price": "102.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:2",
+              "event_time": "2024-12-02T09:46:30",
+              "available_at": "2024-12-02T09:46:30",
+              "price": "101.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:16:3",
+              "event_time": "2024-12-02T09:46:45",
+              "available_at": "2024-12-02T09:46:45",
+              "price": "102",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:0",
+              "event_time": "2024-12-02T09:47:00",
+              "available_at": "2024-12-02T09:47:00",
+              "price": "102.5",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:1",
+              "event_time": "2024-12-02T09:47:15",
+              "available_at": "2024-12-02T09:47:15",
+              "price": "102.6",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:2",
+              "event_time": "2024-12-02T09:47:30",
+              "available_at": "2024-12-02T09:47:30",
+              "price": "102.4",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:17:3",
+              "event_time": "2024-12-02T09:47:45",
+              "available_at": "2024-12-02T09:47:45",
+              "price": "102.5",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:0",
+              "event_time": "2024-12-02T09:48:00",
+              "available_at": "2024-12-02T09:48:00",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:1",
+              "event_time": "2024-12-02T09:48:15",
+              "available_at": "2024-12-02T09:48:15",
+              "price": "104.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:2",
+              "event_time": "2024-12-02T09:48:30",
+              "available_at": "2024-12-02T09:48:30",
+              "price": "103.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:18:3",
+              "event_time": "2024-12-02T09:48:45",
+              "available_at": "2024-12-02T09:48:45",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:0",
+              "event_time": "2024-12-02T09:49:00",
+              "available_at": "2024-12-02T09:49:00",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:1",
+              "event_time": "2024-12-02T09:49:15",
+              "available_at": "2024-12-02T09:49:15",
+              "price": "104.1",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:2",
+              "event_time": "2024-12-02T09:49:30",
+              "available_at": "2024-12-02T09:49:30",
+              "price": "103.9",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            },
+            {
+              "trade_id": "AAA:19:3",
+              "event_time": "2024-12-02T09:49:45",
+              "available_at": "2024-12-02T09:49:45",
+              "price": "104",
+              "size": "25",
+              "quality_ok": true,
+              "conditions": [
+                "ALL"
+              ],
+              "tape": null
+            }
+          ]
+        }
+      },
+      "scanner_inputs": {
+        "09:46:00": {
+          "AAA": {
+            "rvol": "2",
+            "gain": "0.03"
+          }
+        }
+      }
+    }
+  ]
+}

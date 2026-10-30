@@ -120,21 +120,25 @@ def _cmd_fixture(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """Runs the synthetic bar session on ReplayRunner; no real provider integration."""
+    """Run one or more synthetic bar/trade sessions; no real provider integration."""
     out_dir = Path("runs") / "run" if args.out == "auto" else Path(args.out)
     try:
         summary, run_id, trace_path, manifest_path = run_cli_entry(args.config, out_dir, report=args.report)
     except RunConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        _print_attempt_paths(exc)
         return EXIT_INVALID_CONFIG
     except IncompleteSessionError as exc:
         print(f"incomplete: {exc}; inspect retained attempt", file=sys.stderr)
+        _print_attempt_paths(exc)
         return EXIT_DATA_ERROR
     except ValueError as exc:
         print(f"error: run invariant failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
+        _print_attempt_paths(exc)
         return EXIT_INVARIANT_FAILURE
     except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
         print(f"error: run failed ({type(exc).__name__}); inspect retained attempt", file=sys.stderr)
+        _print_attempt_paths(exc)
         return EXIT_OTHER_FAILURE
 
     print(f"ok: {len(summary['decisions'])} decision(s), {len(summary['fills'])} fill(s)")
@@ -148,8 +152,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def _print_attempt_paths(exc):
+    for label, attribute in (("run_id", "run_id"), ("trace", "trace_path"), ("manifest", "manifest_path")):
+        value = getattr(exc, attribute, None)
+        if value is not None:
+            print(f"{label}: {value}", file=sys.stderr)
+
+
 def _cmd_compare(args: argparse.Namespace) -> int:
-    """Compares two retained `rsys run` (StandaloneRunner) manifests -- NOT `rsys replay`
+    """Compares two retained synthetic `rsys run` manifests -- NOT `rsys replay`
     attempts; see docs/M2_IMPLEMENTATION_STATUS.md."""
     storage_root = Path(args.storage_root)
     run_a, run_b = args.runs
@@ -192,13 +203,13 @@ def build_parser() -> argparse.ArgumentParser:
     fixture.add_argument("--out", default="auto", help="Output directory, or 'auto' to derive one")
     fixture.set_defaults(func=_cmd_fixture)
 
-    run = subparsers.add_parser("run", help="Run a synthetic standalone ORB/VWAP session (not real ReplayRunner data)")
-    run.add_argument("--config", required=True, help="Path to a synthetic session JSON config")
+    run = subparsers.add_parser("run", help="Run synthetic ORB/VWAP bar or trade sessions with retained evidence")
+    run.add_argument("--config", required=True, help="Path to a version-1 single-session or version-2 sessions JSON config")
     run.add_argument("--out", default="auto", help="Output directory, or 'auto' to derive one")
     run.add_argument("--report", action="store_true", help="Also render a portable report.html alongside the attempt")
     run.set_defaults(func=_cmd_run)
 
-    compare = subparsers.add_parser("compare", help="Compare two retained `rsys run` StandaloneRunner manifests")
+    compare = subparsers.add_parser("compare", help="Compare two retained synthetic `rsys run` manifests")
     compare.add_argument("--storage-root", required=True, help="The --out directory used by the two `rsys run` invocations")
     compare.add_argument("--runs", nargs=2, required=True, metavar=("RUN_ID_A", "RUN_ID_B"))
     compare.add_argument("--permitted-difference", default=None, help="The one assumption field allowed to differ")
