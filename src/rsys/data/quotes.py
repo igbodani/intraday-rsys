@@ -108,9 +108,10 @@ class MismatchedQuoteSeriesError(Exception):
 
 
 class QuoteState:
-    """Owns the single latest quote for one series (instrument/feed/venue). Only ever advances
-    forward in availability; it never accepts an update that is not strictly later, matching
-    the replay dispatch order's own forward-only guarantee."""
+    """Latest quote for an instrument/feed, in nondecreasing availability order.
+
+    Equal-time events follow the runner's source sequence and stable tie break.
+    """
 
     def __init__(self, instrument_id: str, feed: str, freshness_policy: QuoteFreshnessPolicy):
         self.instrument_id = instrument_id
@@ -124,6 +125,8 @@ class QuoteState:
                 f"quote for ({event.instrument_id!r}, {event.feed!r}) cannot update quote state "
                 f"for ({self.instrument_id!r}, {self.feed!r})"
             )
+        if self._latest is not None and event.available_at_ns < self._latest.available_at_ns:
+            raise ValueError("quote availability cannot move backward")
         snapshot = QuoteSnapshot.from_event(event)
         self._latest = snapshot
         return snapshot

@@ -218,6 +218,7 @@ def start_run(
     account_cost_profile: str | None = None,
     data_identity: str | None = None,
     data_not_applicable_reason: str | None = None,
+    data_unavailable_reason: str | None = None,
     repo_root: str | Path | None = None,
 ) -> RunRecord:
     """Create a new run record. Input-data provenance is mandatory: either a
@@ -225,9 +226,10 @@ def start_run(
     never both -- a nonempty sentinel alone must not stand in for real provenance."""
     identity_given = data_identity is not None and data_identity.strip() != ""
     reason_given = data_not_applicable_reason is not None and data_not_applicable_reason.strip() != ""
-    if identity_given and reason_given:
+    unavailable_given = data_unavailable_reason is not None and bool(data_unavailable_reason.strip())
+    if sum((identity_given, reason_given, unavailable_given)) > 1:
         raise ValueError("start_run: data_identity and data_not_applicable_reason are contradictory; provide one")
-    if not identity_given and not reason_given:
+    if not identity_given and not reason_given and not unavailable_given:
         raise ValueError("start_run requires a nonblank data_identity or a nonblank data_not_applicable_reason")
 
     root = Path(repo_root) if repo_root is not None else None
@@ -241,7 +243,8 @@ def start_run(
         parent_run_id=parent_run_id,
         resolved_config=redacted_config,
         config_hash=canonical_hash(redacted_config),
-        data_hash=data_identity if identity_given else f"not_applicable:{data_not_applicable_reason}",
+        data_hash=(data_identity if identity_given else f"unavailable:{data_unavailable_reason}"
+                   if unavailable_given else f"not_applicable:{data_not_applicable_reason}"),
         code_hash=code_hash,
         code_manifest=code_manifest,
         code_revision=compute_code_revision(root),

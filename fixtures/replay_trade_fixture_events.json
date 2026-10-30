@@ -1,63 +1,179 @@
 {
   "schema_version": 1,
   "evidence_type": "synthetic_only",
-  "warning": "Synthetic, hand-constructed event fixture (the replay plan's worked one-minute trade example). Never provider-verified data.",
+  "warning": "Synthetic, hand-constructed event fixture (the replay plan's worked one-minute trade example). Never provider-verified data. Receipt timestamps are deliberately constructed synthetic test values.",
   "events": [
     {
-      "kind": "trade", "event_id": "T1", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:30:05Z", "available_at": "2024-06-10T09:30:05Z",
-      "price": "100", "size": "10", "trade_id": "T1", "venue": "V", "conditions": ["ALL"]
+      "kind": "trade",
+      "event_id": "T1",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:30:05Z",
+      "available_at": "2024-06-10T13:30:05Z",
+      "price": "100",
+      "size": "10",
+      "trade_id": "T1",
+      "venue": "V",
+      "conditions": [
+        "ALL"
+      ],
+      "received_at": "2024-06-10T13:30:05Z"
     },
     {
-      "kind": "trade", "event_id": "T2", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:30:20Z", "available_at": "2024-06-10T09:30:20Z",
-      "price": "102", "size": "20", "trade_id": "T2", "venue": "V", "conditions": ["ALL"]
+      "kind": "trade",
+      "event_id": "T2",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:30:20Z",
+      "available_at": "2024-06-10T13:30:20Z",
+      "price": "102",
+      "size": "20",
+      "trade_id": "T2",
+      "venue": "V",
+      "conditions": [
+        "ALL"
+      ],
+      "received_at": "2024-06-10T13:30:20Z"
     },
     {
-      "kind": "trade", "event_id": "T3", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:30:30Z", "available_at": "2024-06-10T09:30:30Z",
-      "price": "150", "size": "5", "trade_id": "T3", "venue": "V", "conditions": ["VOLUME_ONLY"]
+      "kind": "trade",
+      "event_id": "T3",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:30:30Z",
+      "available_at": "2024-06-10T13:30:30Z",
+      "price": "150",
+      "size": "5",
+      "trade_id": "T3",
+      "venue": "V",
+      "conditions": [
+        "VOLUME_ONLY"
+      ],
+      "received_at": "2024-06-10T13:30:30Z"
     },
     {
-      "kind": "trade", "event_id": "T4", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:30:50Z", "available_at": "2024-06-10T09:30:50Z",
-      "price": "101", "size": "10", "trade_id": "T4", "venue": "V", "conditions": ["ALL"]
+      "kind": "trade",
+      "event_id": "T4",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:30:50Z",
+      "available_at": "2024-06-10T13:30:50Z",
+      "price": "101",
+      "size": "10",
+      "trade_id": "T4",
+      "venue": "V",
+      "conditions": [
+        "ALL"
+      ],
+      "received_at": "2024-06-10T13:30:50Z"
     },
     {
-      "kind": "timer", "event_id": "close1", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "scheduled_boundary", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:31:00Z", "available_at": "2024-06-10T09:31:00Z",
-      "boundary_name": "session_close", "calendar_version": "nyse-2024-v1"
+      "kind": "timer",
+      "event_id": "close1",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "scheduled_boundary",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:31:00Z",
+      "available_at": "2024-06-10T13:31:00Z",
+      "boundary_name": "window_end",
+      "calendar_version": "nyse-2024-v1"
     },
     {
-      "kind": "trade", "event_id": "T5", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:30:55Z", "available_at": "2024-06-10T09:31:05Z",
-      "price": "103", "size": "5", "trade_id": "T5", "venue": "V", "conditions": ["ALL"]
+      "kind": "trade",
+      "event_id": "T5",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:30:55Z",
+      "available_at": "2024-06-10T13:31:05Z",
+      "price": "103",
+      "size": "5",
+      "trade_id": "T5",
+      "venue": "V",
+      "conditions": [
+        "ALL"
+      ],
+      "received_at": "2024-06-10T13:31:05Z"
     },
     {
-      "kind": "trade_correction", "event_id": "C2", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:31:10Z", "available_at": "2024-06-10T09:31:10Z",
-      "original_trade_id": "T2", "action": "cancel"
+      "kind": "trade_correction",
+      "event_id": "C2",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:31:10Z",
+      "available_at": "2024-06-10T13:31:10Z",
+      "original_trade_id": "T2",
+      "action": "cancel",
+      "received_at": "2024-06-10T13:31:10Z"
     },
     {
-      "kind": "trade_correction", "event_id": "C5", "instrument_id": "AAA", "provider": "alpaca", "feed": "fixture",
-      "event_time_meaning": "provider_market_time", "session_version": "nyse-2024-v1",
-      "quality_state": "ok", "timing_label": "recorded",
-      "event_time": "2024-06-10T09:31:15Z", "available_at": "2024-06-10T09:31:15Z",
-      "original_trade_id": "T5", "action": "cancel"
+      "kind": "trade_correction",
+      "event_id": "C5",
+      "instrument_id": "AAA",
+      "provider": "alpaca",
+      "feed": "fixture",
+      "event_time_meaning": "provider_market_time",
+      "session_version": "nyse-2024-v1",
+      "quality_state": "ok",
+      "timing_label": "recorded",
+      "event_time": "2024-06-10T13:31:15Z",
+      "available_at": "2024-06-10T13:31:15Z",
+      "original_trade_id": "T5",
+      "action": "cancel",
+      "received_at": "2024-06-10T13:31:15Z"
     }
-  ]
+  ],
+  "coverage": {
+    "available_through": "2024-06-10T13:31:15Z",
+    "expected_event_ids": [
+      "C2",
+      "C5",
+      "T1",
+      "T2",
+      "T3",
+      "T4",
+      "T5",
+      "close1"
+    ],
+    "intervals": [
+      {
+        "instrument_id": "AAA",
+        "bar_start": "2024-06-10T13:30:00Z",
+        "state": "observed"
+      }
+    ]
+  }
 }

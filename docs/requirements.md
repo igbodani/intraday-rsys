@@ -1,6 +1,6 @@
 # Requirement-to-test traceability
 
-IDs are stable. CFG-*/DATA-*/CAUS-001/CAUS-002/BAR-*/REPLAY-*/QUOTE-*/EXP-* test paths below have been executed and pass (348 tests, `uv run pytest tests/ -q`; `uv run ruff check .` clean, as of the 2026-10-29 corrections-and-R3 pass). Remaining rows (M2-01 and later: ORDER-001, STORE-001, CAUS-003/004, EXEC-*, ACCT-*, CAL-001, POS-001, STRAT-*, REPORT-001) are still implementation targets; their test paths have not been run against a system.
+IDs are stable. Current verification is recorded in `R3_REPAIR_RESULTS.md`: 426 tests pass, with the new R3SAFE rows exercising the public runner/view/CLI repairs. Older R3INT rows retain their historical mapping but do not by themselves prove delayed-event safety. M2 and later rows remain implementation targets; no ledger, strategy, execution or holdout behavior is claimed.
 
 | ID | Requirement | Acceptance test / fixture | Ticket |
 |---|---|---|---|
@@ -104,6 +104,27 @@ New stable IDs for the C01-C10 findings; C01-C10 themselves are handoff referenc
 | CORR-012 | A `replay`-mode config validates its own required settings; a legacy `fixture`-mode config cannot satisfy them by switching `mode` alone | `test_a_legacy_fixture_config_is_not_accepted_as_a_replay_config`, `test_replay_unsupported_setting_value_rejected` | R3-A |
 | CORR-013 | Field eligibility separates open/high/low/close/volume/count/vwap; a late-report condition can be close-eligible without being high/low/vwap-eligible | `test_late_report_condition_allows_close_but_not_high_low_or_vwap` | R3-A |
 
+## R3 integration repair regressions (2026-10-29 R3_INTEGRATION_REPAIR_TASKS pass)
+
+New stable IDs for the R3I-01..14 findings; R3I-01..14 themselves are handoff references, not requirement IDs.
+
+| ID | Requirement | Acceptance test / fixture | Ticket |
+|---|---|---|---|
+| R3INT-01 | A saved context's own query answers never move after later trades/corrections/closure/actions -- `forming_bar`/`closed_bars` are sourced from the immutable version store, never a live mutable builder query | `test_saved_context_survives_later_trade_correction_and_close`, `test_saved_context_stability_integrated` | IR-02 |
+| R3INT-02 | The authoritative trade-built completed-interval history reaches the common `closed_bars()` view, not only provider-publication events | `test_trade_authority_exposes_completed_bars_to_closed_context` | IR-02 |
+| R3INT-03 | A provider OHLCV change changes the trace content and its semantic hash | `test_provider_price_change_changes_trace_and_semantic_hash` | IR-05 |
+| R3INT-04 | A later quote never changes an earlier quote's trace row (captured at dispatch time, not re-queried afterward) | `test_quote_trace_prefix_is_unchanged_by_future_quotes` | IR-05 |
+| R3INT-05 | Every `rsys replay` execution creates a fresh retained run-evidence attempt (distinct run ID + attempt directory); failures are retained too | `test_repeated_replay_runs_produce_identical_semantic_trace_hashes_but_distinct_run_ids`, `test_two_successful_and_one_failed_attempt_all_independently_retained` | IR-05 |
+| R3INT-06 | An unrelated timer (wrong boundary name/session) cannot certify replay completion | `test_early_unrelated_timer_cannot_complete_truncated_replay` | IR-03 |
+| R3INT-07 | A corporate action straddling a forming bucket explicitly invalidates it; a boundary-exact dispatch is not a straddle | `test_split_cannot_silently_create_a_mixed_unit_bar`, `test_split_exactly_on_a_bucket_boundary_is_not_a_straddle`, `test_unsupported_split_straddle_through_the_runner` | IR-03 |
+| R3INT-08 | `replay.input_mode` and `bars.authority` must describe the same actual data; incompatible combinations fail before execution | `test_completed_bar_input_mode_rejects_trade_builder_authority`, `test_historical_trade_input_mode_rejects_provider_publication_authority` | IR-04 |
+| R3INT-09 | A `fixture_only`-evidence method reference is recognized by the registry but never satisfies a research-profile gate | `test_fixture_only_method_reference_never_satisfies_a_research_gate`, `test_registered_fixture_only_method_resolves_in_the_registry_itself` | IR-04 |
+| R3INT-10 | A rejected correction (e.g. unknown condition) leaves the contributor, eligibility and publication history completely unchanged | `test_rejected_correction_has_no_side_effects` | IR-01 |
+| R3INT-11 | Identical redelivery of a trade/correction is an idempotent no-op; a bare trade ID reused in a different bucket is an explicit identity conflict | `test_duplicate_correction_and_identity_conflict_are_safe` | IR-01 |
+| R3INT-12 | A first late trade into an already-elapsed bucket is never presented as currently forming | `test_first_late_trade_respects_elapsed_boundary` | IR-02/IR-03 |
+| R3INT-13 | Disabled quote capability refuses to serve raw quotes; an invalid-quality provider bar never reaches `closed_bars` | `test_disabled_quote_capability_refuses_to_serve_raw_quotes`, `test_invalid_quality_provider_bar_never_reaches_closed_bars` | IR-06 |
+| R3INT-14 | Parity count mismatches are reported independent of VWAP-precision checking; adjustment-mode/quality prerequisites gate comparability | `test_count_mismatch_is_reported_with_default_arguments_no_vwap_precision`, `test_different_adjustment_mode_basis_is_not_comparable`, `test_invalid_quality_provider_bar_is_not_comparable` | IR-06 |
+
 ## Future-perturbation harness
 
 1. Build a multi-symbol synthetic stream with scanner changes, orders, open positions, feature warmup and session timers.
@@ -112,3 +133,22 @@ New stable IDs for the C01-C10 findings; C01-C10 themselves are handoff referenc
 4. Run again with the same configuration and seed. Assert byte-identical canonical records through K after excluding nondeterministic wall-clock/run-ID fields.
 5. Repeat around range close, a same-time cross-symbol boundary and a stop-update boundary. Test late-arriving observations by availability, not merely the market time printed on a bar.
 6. Separately permute input file order. After canonical ordering, the entire output must match. Add a deliberately leaky test double and verify that the harness catches it; do not ship the double as a strategy.
+
+## R3SAFE: historical visibility, runtime enforcement and public acceptance
+
+These tests supplement existing requirements; none lowers the research or execution bar. Unless specified, paths are in `tests/test_r3_clock_fixes.py` (clock) or `tests/test_replay_contract_fixes.py` (contract).
+
+| ID | Requirement | Executed acceptance test(s) | Ticket |
+|---|---|---|---|
+| R3SAFE-001 | Delayed closures/actions cannot rewrite saved or freshly queried historical observations | `test_delayed_timer_cannot_backdate_a_late_trade_into_saved_context`, `test_delayed_action_cannot_rewrite_a_saved_forming_context`, `test_phase_cutoffs_and_same_timestamp_context_are_frozen` | R3 repair |
+| R3SAFE-002 | Elapsed minutes close without input timers; first late arrivals have truthful availability | `test_elapsed_minute_closes_without_a_timer_in_the_input`, `test_late_first_arrival_without_prior_instrument_timer_is_closed` | R3 repair |
+| R3SAFE-003 | Completed-bar cadence excludes unrelated arrivals and redelivery | `test_closed_observer_is_not_called_again_for_a_later_trade`, `test_duplicate_delivery_does_not_retrigger_a_closed_observer`, `test_provider_redelivery_does_not_retrigger_completed_bar_observer` | R3 repair |
+| R3SAFE-004 | Unsupported config fails early; supported sessions and timing are enforced | `test_unsupported_replay_configuration_fails_early`, `test_unknown_policy_or_undeclared_modeled_delay_is_rejected`, `test_declared_replay_windows_follow_dst_and_early_close`, `test_outside_session_and_unknown_calendar_dates_are_rejected`, `test_modeled_delay_is_enforced_and_cannot_be_labeled_recorded` | R3 repair |
+| R3SAFE-005 | Public quote access respects freshness/quality without resurrecting old good state | `test_strategy_quote_access_enforces_declared_freshness`, `test_bad_quote_does_not_resurrect_an_older_good_quote` | R3 repair |
+| R3SAFE-006 | Full runner-generated decision prefixes resist future perturbations; harness detects an intentional leak | `test_future_perturbations_preserve_full_decision_prefix_and_saved_contexts`, `test_same_prefix_harness_detects_a_deliberately_leaky_runner`, `test_cross_symbol_batch_observer_sees_both_symbols_before_deciding` | R3 repair |
+| R3SAFE-007 | Coverage uses source inventory and interval states independently of timers | `test_source_inventory_detects_truncation_even_with_a_closing_timer`, `test_source_inventory_counts_repeated_ids_instead_of_collapsing_them`, `test_verified_quiet_minute_completes_without_fabricating_a_bar` | R3 repair |
+| R3SAFE-008 | Real CLI invokes synthetic observers and records decisions/no-decisions/input versions | `test_real_cli_dispatches_named_synthetic_observers` (three cases) | R3 repair |
+| R3SAFE-009 | Invalid/unreadable/incomplete inputs retain truthful attempts and controlled errors | `test_unreadable_input_retains_failed_attempt_and_explicit_unavailable_provenance`, `test_recorded_observations_without_receipt_evidence_fail_truthfully`, `test_incomplete_cli_uses_data_error_exit_code`, `test_invalid_event_error_does_not_persist_submitted_secret_values` | R3 repair |
+| R3SAFE-010 | Unsupported action-unit combinations fail safely, including late-first-contributor cases | `test_first_late_trade_after_action_cannot_create_a_valid_mixed_unit_bar`, `test_provider_split_straddle_retains_non_success_instead_of_mixed_units` | R3 repair |
+| R3SAFE-011 | Provider revisions conflict explicitly; parity requires valid versions and an appropriate cutoff | `test_conflicting_provider_revision_fails_before_acceptance`; `test_provider_bar_parity.py`: `test_invalidated_version_is_not_comparable`, `test_revised_builder_cannot_silently_compare_with_initial_provider_publication`, `test_explicit_comparison_cutoff_rejects_future_publication` | R3 repair |
+| R3SAFE-012 | Inputs resolve relative to config; explicit modeled timing can execute | `test_config_relative_input_works_from_another_working_directory`, `test_explicit_modeled_timing_can_run_when_every_external_event_agrees` | R3 repair |

@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from rsys.data.bar_version_store import BarVersion
-from rsys.data.events import ProviderBarEvent
+from rsys.data.events import ProviderBarEvent, QualityState
 
 
 class FieldMismatch(NamedTuple):
@@ -32,7 +32,7 @@ class ParityResult(NamedTuple):
     not_comparable_reason: str | None
 
 
-_PREREQUISITE_FIELDS = ("instrument_id", "feed", "interval", "bar_start_ns", "bar_end_ns")
+_PREREQUISITE_FIELDS = ("instrument_id", "feed", "interval", "bar_start_ns", "bar_end_ns", "adjustment_mode", "provider", "session_version")
 _EXACT_FIELDS = ("open", "high", "low", "close", "volume")
 
 
@@ -45,6 +45,7 @@ def compare_bar_version_to_provider_bar(
     provider_bar: ProviderBarEvent,
     *,
     vwap_precision: int | None = None,
+    as_of_ns: int | None = None,
 ) -> ParityResult:
     """Compare one builder-derived `BarVersion` to one `ProviderBarEvent`.
 
@@ -57,20 +58,25 @@ def compare_bar_version_to_provider_bar(
     if mismatched_prerequisites:
         return _not_comparable(
             f"prerequisite mismatch on {mismatched_prerequisites}: instrument/feed/interval/bucket "
-            "boundaries must match before a field-by-field comparison is meaningful"
+            "boundaries and adjustment/unit basis must match before a field-by-field comparison is meaningful"
         )
 
-    if version.status == "forming":
+    if provider_bar.quality_state != QualityState.OK:
+        return _not_comparable(
+            f"provider_bar quality_state is {provider_bar.quality_state.value!r}, not 'ok'; an "
+            "invalid/suspect/unavailable observation is never comparable"
+        )
+
+    if version.status not in ("closed_as_of", "revised"):
         return _not_comparable(
             "a forming (not yet closed) version cannot be compared against a final provider bar"
         )
 
-    is_revision = getattr(provider_bar, "bar_revision", 1) > 1
-    if version.revision == 0 and is_revision:
-        return _not_comparable(
-            "comparing a first-publication version against a provider revision is not a like-for-like "
-            "as-of comparison; select the provider's first publication or the version's matching revision"
-        )
+    is_revision = provider_bar.bar_revision > 1 or version.revision > 0
+    if is_revision and as_of_ns is None:
+        return _not_comparable("revision comparison requires an explicit common as-of cutoff")
+    if as_of_ns is not None and max(version.available_at_ns, provider_bar.available_at_ns) > as_of_ns:
+        return _not_comparable("a selected publication was not available at the common cutoff")
 
     mismatches = [
         FieldMismatch(field, getattr(version, field), getattr(provider_bar, field))
@@ -78,15 +84,17 @@ def compare_bar_version_to_provider_bar(
         if getattr(version, field) != getattr(provider_bar, field)
     ]
 
-    if vwap_precision is not None:
-        provider_trade_count = getattr(provider_bar, "trade_count", None)
-        if version.trade_count != provider_trade_count:
-            mismatches.append(FieldMismatch("trade_count", version.trade_count, provider_trade_count))
-        if version.vwap_denominator != 0 and provider_bar.vwap is not None:
-            quantum = Decimal(1).scaleb(-vwap_precision)
-            builder_vwap = (version.vwap_numerator / version.vwap_denominator).quantize(quantum)
-            provider_vwap = provider_bar.vwap.quantize(quantum)
-            if builder_vwap != provider_vwap:
-                mismatches.append(FieldMismatch("vwap", builder_vwap, provider_vwap))
+    # R3I-14: count is independent evidence, checked whenever the provider declares one --
+    # never gated behind whether VWAP precision checking was also requested.
+    provider_trade_count = getattr(provider_bar, "trade_count", None)
+    if provider_trade_count is not None and version.trade_count != provider_trade_count:
+        mismatches.append(FieldMismatch("trade_count", version.trade_count, provider_trade_count))
+
+    if vwap_precision is not None and version.vwap_denominator != 0 and provider_bar.vwap is not None:
+        quantum = Decimal(1).scaleb(-vwap_precision)
+        builder_vwap = (version.vwap_numerator / version.vwap_denominator).quantize(quantum)
+        provider_vwap = provider_bar.vwap.quantize(quantum)
+        if builder_vwap != provider_vwap:
+            mismatches.append(FieldMismatch("vwap", builder_vwap, provider_vwap))
 
     return ParityResult(comparable=True, match=len(mismatches) == 0, mismatches=tuple(mismatches), not_comparable_reason=None)

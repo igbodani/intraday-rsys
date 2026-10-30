@@ -1,30 +1,52 @@
 # intraday-rsys
 
-Implementation of the intraday strategy research system. `AGENTS.md` and `docs/` (contracts, decisions, tickets, strategy specs) are copied from the planning pack and govern this repo directly.
+Offline, synthetic-first implementation of the intraday research system governed by `AGENTS.md` and `docs/`. No market data acquisition, broker access or trading is implemented.
 
-Start with `docs/tickets.md` for the ticket order (M0–M2) before writing logic into the modules below. `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` supersedes `docs/NEXT_STEPS.md` for current ordering after M1-01 (H1/H2 hardening, then D1/R1-R3 typed events and replay). `configs/` and `fixtures/` hold the synthetic inputs tickets are built and tested against.
+## Current behavior
 
-## Status
+- Configuration: isolated fixture, research and replay profiles; unresolved research decisions remain named blockers.
+- Run evidence: transactional SQLite attempts, immutable resolved inputs, provenance hashes, failure retention, crash recovery and credential redaction.
+- Data: typed nanosecond events, quality checks, coverage manifests, and a declared 2024 NYSE calendar with DST and early closes.
+- Replay: availability-ordered events, internally scheduled minute closures, immutable historical contexts, trade-built forming/closed/revised bars, optional quote state and an offline parity comparator.
+- Observations: completed-bar callbacks on new completed publications; separately opted-in intrabar callbacks after each availability batch. Two named synthetic observers can run through the CLI and record the versions they read, including evaluations that produce no decision.
 
-**M0-01 (configuration validation, hardened under H1), M0-02 (run evidence, hardened under H2), M1-01 (data/calendar contracts), D1 (typed market events and universe coverage), R1 (replay clock and bounded views), and R2 (trade-driven bar builder) are implemented, and have since been corrected and completed through R3 (see below).** `rsys validate --config PATH` loads a `fixture` or `research` profile, type-checks it, and reports every unresolved/invalid field by name with its decision ID (`docs/decisions.md`). Config validation rejects booleans masquerading as numbers, unimplemented schema versions, offset-bearing local cutoff times, placeholder gate-method strings, and blank identifiers/list elements; error messages never echo the submitted or resolved value. `rsys.experiments`/`rsys.storage` provide `start_run`/`run_context` helpers backed by a transactional SQLite store, with immutable resolved inputs, a frozen status lifecycle (`pending -> running -> {success, failed, interrupted, crashed}`), `KeyboardInterrupt` handling, owner-process-verified crash recovery with an exclusive recovery lock, single-component run-ID path safety, a content-based code fingerprint (differs for any dirty-tree change), and camelCase/header-aware secret redaction. `rsys.calendar` and `rsys.data` provide a declared 2024 NYSE calendar (DST-correct UTC conversion, early closes), bar-quality checks (DQ01-DQ07), corporate-action dispatch-timing/unit-conversion contracts with tz-aware validation and late-split bar invalidation (F17), a frozen nanosecond-precise market-event envelope (trade/correction/quote/provider-bar/corporate-action/timer), a `NormalizedBar` contract with canonical identity and interval/availability validation, and a universe-coverage manifest (DATA-002) distinguishing verified no-trade intervals from missing delivery. `rsys.replay`/`rsys.views` provide a deterministic, profile-aware (`bar_v1` / `trade_replay_v1`) availability clock with stable same-time batching, a late-insertion queue guard, and bounded immutable as-of views (`closed_bars`/`latest_trade`/`latest_quote`; `forming_bar` explicitly awaits R3's wiring) split into a close-only baseline context and an opted-in intrabar context, with a future-perturbation harness proving earlier outputs can't change. `rsys.data.bar_builder`/`bar_rules` build FORMING -> CLOSED_AS_OF -> REVISED bar snapshots from a declared synthetic rule set (field eligibility per trade condition code, with real-provider semantics explicitly unresolved pending D12), fully recomputing OHLC/volume/VWAP on every correction/cancel (never patching incrementally), with idempotent redelivery, unresolved-reference/eviction/split-overlap guards, and immutable per-call snapshots. `fixture`, `run`, `compare`, and `final-evaluate` remain CLI stubs (later tickets); no replay/bar-builder wiring, quote state, provider-bar parity, scanner, strategy, ledger, or trading logic exists yet, and no market data or backtest evidence is produced by this repo.
+- Synthetic account sessions: scanner ranking, ORB/VWAP, owned cash reservations, fill-time sizing, entry-interval protection, independent timers, net metrics, guarded comparison and portable reports. The bar session runner now uses ReplayRunner-backed source views and the shared phase clock.
+
+Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md) for the module/test inventory and Copilot work order. [M2_REPAIR_RESULTS.md](docs/M2_REPAIR_RESULTS.md) records the current repairs; [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md) remains the earlier data-replay repair record.
+
+## Run locally
+
+Python 3.12 or newer and `uv` are required. Recreate your environment locally; do not reuse a virtual environment copied from another operating system.
 
 ```bash
-uv run rsys validate --config configs/fixture.yaml           # exits 0: synthetic fixture profile, no blockers
-uv run rsys validate --config configs/baseline_pending.yaml  # exits 2: draft market profile, lists every unresolved field
-
-uv run pytest tests/
+uv sync --frozen --group dev
+uv run rsys validate --config configs/fixture.yaml
+uv run rsys validate --config configs/baseline_pending.yaml  # expected exit 2: unresolved research decisions
+uv run rsys replay --config configs/replay_bar_fixture.yaml --out auto
+uv run rsys replay --config configs/replay_trade_fixture.yaml --out auto
+uv run rsys replay --config configs/replay_intrabar_observer_fixture.yaml --out auto
+uv run rsys replay --config configs/replay_closed_observer_fixture.yaml --out auto
+uv run rsys fixture --case all --out runs/fixture
+uv run rsys run --config fixtures/standalone_run_fixture.json --out runs/orb --report
+uv run rsys run --config fixtures/standalone_vwap_fixture.json --out runs/vwap --report
+uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-### R3 corrections and completion (2026-10-29 pass, `docs/REPLAY_CORRECTIONS_AND_R3_HANDOFF.md`)
+The verified suite contains **622 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
-`FIX-01`..`FIX-05` fixed ten reproduced/inspection defects (C01-C10: a fingerprint exclusion bug, a config/storage transaction race, a swallowed finalization error, a credential-redaction gap after reload, under-validated bar/trade events, a historical-query backdating bug, an ordering tie-break bug, an unregistered-method-reference bypass, and several builder/rule-interface gaps) with regression tests proving each defect before fixing it. `R3-A`/`R3-B`/`R3-C` then completed the replay path: a validated `ReplayConfig` profile (`src/rsys/config.py`), an immutable `BarVersionStore` (`src/rsys/data/bar_version_store.py`), a `SeriesRouter`/`ReplayRunner` (`src/rsys/replay_runtime.py`) that wires `ReplayView.forming_bar` to a real trade-driven builder, optional quote state (`src/rsys/data/quotes.py`), an offline provider/builder parity comparator (`src/rsys/parity.py`), and a working `rsys replay --config PATH --out auto` CLI command (`src/rsys/replay_io.py`) that produces a deterministic JSONL trace plus run manifest for both a completed-bar and a trade-built-bar synthetic fixture. All of this remains offline/synthetic: no market data was fetched or purchased, and `FixtureBarRuleSet`/the parity comparator's fixtures are explicitly NOT verified Alpaca behavior (a real provider adapter remains blocked on D12's audit). M2 (ledger, execution, scanner, strategies) is not yet implemented.
+## Replay limits and configuration migration
 
-```bash
-uv run rsys replay --config configs/replay_bar_fixture.yaml --out auto     # completed-bar profile
-uv run rsys replay --config configs/replay_trade_fixture.yaml --out auto   # trade-built-bar profile
+The implemented CLI supports one declared regular session in the 2024 calendar, one-minute intervals, raw units and synthetic aggregation/quote policies. Unknown rules, unsupported intervals/unit policies, incompatible profiles and invalid coverage dates fail validation. `recorded_receipt` requires receipt timestamps; `modeled_availability` requires an explicit nonnegative `modeled_delay_ms`. Receipt timestamps in the supplied fixtures are synthetic examples, not captured market traffic.
 
-uv run pytest tests/      # 348 passed
-uv run ruff check .       # clean
-```
+Coverage now declares `window_start_at`, `required_boundary_at`, `available_through_at`, provider, feed, instruments and calendar version. Input JSON separately declares the expected event inventory and observed/no-trade/missing-delivery state for each requested minute. A timer alone never establishes completeness. A verified quiet minute does not create a fabricated flat bar. See the supplied configs and [contracts](docs/contracts.md) for the schema.
 
+Late trades, corrections and actions may change later observations. They cannot change a previously saved context or publish a new version into the past. Unsupported split-straddled bars are invalidated and the run is retained as non-success. This is a conservative rejection, not a complete cross-split feature/position conversion implementation.
+
+Quote freshness is measured from availability at the decision clock under the declared synthetic policy. Stale, invalid, crossed, locked or one-sided quotes are unavailable through `latest_quote()`; diagnostic state remains accessible. Quotes never contribute trade volume or create trade bars. No real feed policy or entitlement has been verified.
+
+## Current limits and next ticket
+
+The account/session layer is a repaired synthetic subset of M2. Next, consolidate the fill/account contract and integrate the subsequent-trade adapter through ReplayRunner, acceptance, risk checks and the ledger. Historical scanner RVOL, multi-session composition and a complete data-loader holdout boundary remain unfinished. The detailed ordered tasks and acceptance tests are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
+
+`fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts only its strict synthetic bar schema. A run with no required flatten may retain open positions as a finite-input diagnostic; a missing required exit is incomplete. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09–D13, D16–D17 and provider-facing D22 remain unresolved.

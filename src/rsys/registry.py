@@ -94,14 +94,16 @@ class MethodSpec:
     """One declared method/specification a gate field may cite.
 
     `evidence_class` distinguishes a method registered purely for synthetic/software
-    tests from one actually approved for a research-profile gate; none are
-    research-approved yet (D17 remains open), so every current entry is fixture-only
-    and can never satisfy a research gate regardless of its reference syntax (C08).
+    tests (`"fixture_only"`) from one actually approved for a research-profile gate
+    (`"research_approved"`); none are research-approved yet (D17 remains open), so
+    every current entry is fixture-only and can resolve/be recognized without ever
+    satisfying a research gate (IR-04/R3I-09) -- resolution and research-eligibility
+    are deliberately two separate questions.
     """
 
     method_id: str
     version: int
-    evidence_class: str  # "fixture_only" is the only value currently populated
+    evidence_class: str  # "fixture_only" | "research_approved" (none registered as the latter yet)
     content_hash: str  # stands in for a real spec/content hash once one is written
 
 
@@ -131,16 +133,26 @@ _DECLARED_METHOD_REFS = (
 METHOD_REGISTRY: dict[str, MethodSpec] = {ref: _method_spec(ref) for ref in _DECLARED_METHOD_REFS}
 
 
-def _is_method_reference(v: Any) -> bool:
-    """A gate 'method' field must resolve to a declared, registered method specification
-    (C08): a syntactically well-formed but unregistered reference (e.g. 'nonexistent_method:v999')
-    must still block, not merely match the naming pattern. No currently registered method is
-    research-approved, so this can never satisfy a research-profile gate regardless of syntax.
-    """
+def resolve_method(v: Any) -> MethodSpec | None:
+    """Resolve a syntactically well-formed, REGISTERED method reference to its spec, or `None`
+    if it does not even parse as `name:vN` or was never registered (C08). This answers only
+    "is this a known declared method", never "may it satisfy a research gate" -- see
+    `_is_method_reference` for that separate, stricter question (IR-04/R3I-09)."""
     if not isinstance(v, str) or _METHOD_REFERENCE_RE.fullmatch(v) is None:
-        return False
-    spec = METHOD_REGISTRY.get(v)
-    return spec is not None and spec.evidence_class == "fixture_only"
+        return None
+    return METHOD_REGISTRY.get(v)
+
+
+def _is_method_reference(v: Any) -> bool:
+    """A RESEARCH gate requires a research-approved specification (IR-04/R3I-09): a registered
+    `fixture_only` method resolves (see `resolve_method`) but must never satisfy a research
+    gate merely because it is syntactically well-formed and registered -- D17 stays open until
+    a real method is approved and registered with `evidence_class="research_approved"`. No
+    currently registered method is research-approved, so this can never pass today regardless
+    of which declared reference is cited.
+    """
+    spec = resolve_method(v)
+    return spec is not None and spec.evidence_class == "research_approved"
 
 
 # Field paths use dotted notation relative to the research config root.
