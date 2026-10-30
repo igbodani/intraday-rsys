@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from rsys.fixture_engine import run_case
+from rsys.execution.fixtures import run_case
 
 
 def test_pending_intent_expires_without_a_fill():

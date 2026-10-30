@@ -6,7 +6,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from rsys.strategies.orb import CompletedBar, OrbConfig, OrbState, OrbStrategy
+from rsys.strategies.models import CompletedBar, OrbConfig, OrbState
+from rsys.strategies.orb import OrbStrategy
 
 CASES_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "strategy_cases.json"
 _CASES = {c["id"]: c for c in json.loads(CASES_PATH.read_text())["cases"] if c["strategy"] == "orb_close_cross_v1"}

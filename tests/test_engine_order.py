@@ -10,10 +10,12 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.acceptance import AcceptanceBook, sort_proposals
-from rsys.orders import Proposal
-from rsys.phase_engine import PhaseEngine, PhaseEvent, PhaseOrderError
-from rsys.portfolio import Portfolio
+from rsys.account.acceptance import AcceptanceBook, sort_proposals
+from rsys.account.models import Proposal
+from rsys.account.portfolio import Portfolio
+from rsys.replay.engine import PhaseEngine
+from rsys.replay.errors import PhaseOrderError
+from rsys.replay.models import PhaseEvent
 
 
 def _noop(_event):

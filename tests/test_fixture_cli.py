@@ -57,7 +57,7 @@ def test_mutated_expected_checkpoint_fails_visibly(tmp_path: Path) -> None:
     # fixture_cli.py reads a fixed repo-relative path, so exercise the engine/compare path
     # directly here instead of through the CLI's fixed file location.
     import importlib
-    fixture_engine = importlib.import_module("rsys.fixture_engine")
+    fixture_engine = importlib.import_module("rsys.execution.fixtures")
     case_f01 = next(c for c in cases["cases"] if c["id"] == "F01")
     result = fixture_engine.run_case(case_f01)
     problems = fixture_engine.compare_case(case_f01, result)

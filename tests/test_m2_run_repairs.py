@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from rsys.run_cli import build_runner, run_synthetic_session
+from rsys.application.builders import build_runner
+from rsys.application.run import run_synthetic_session
 
 
 def config():
@@ -153,7 +154,7 @@ def test_fill_rechecks_risk_and_never_upsizes():
 
 
 def test_real_replay_context_and_trace_prefix_survive_future_changes():
-    from rsys.replay_runtime import ReplayRunner
+    from rsys.replay.runtime import ReplayRunner
 
     a, b = config(), config()
     b["symbols"]["AAA"]["bars"][-1].update(

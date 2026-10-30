@@ -1,5 +1,7 @@
 # M2 repair results
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 Date: 2026-10-29. Target branch: `fix/r3-replay-causality`. Parent: `de33f3303aa54e7a9fdfa0bd9ba897be000a5bf4`. This document describes the repaired source in its containing commit. No merge, force push, market-data purchase or trading action is part of the repair.
 
 ## Findings and changes

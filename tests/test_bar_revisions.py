@@ -3,18 +3,14 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.data.actions import CorporateAction
-from rsys.data.bar_builder import (
-    EvictedBucketError,
-    SnapshotStatus,
-    TradeBarBuilder,
-    UnsupportedSplitOverlapError,
-    raise_if_bucket_straddles_action,
-)
+from rsys.data.bar_builder import TradeBarBuilder, raise_if_bucket_straddles_action
 from rsys.data.bar_rules import FixtureBarRuleSet
-from rsys.data.events import (
+from rsys.data.errors import EvictedBucketError, UnsupportedSplitOverlapError
+from rsys.data.models import (
+    CorporateAction,
     EventTimeMeaning,
     QualityState,
+    SnapshotStatus,
     TimingLabel,
     TradeCorrectionEvent,
     TradeEvent,

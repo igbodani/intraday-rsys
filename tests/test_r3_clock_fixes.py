@@ -6,13 +6,19 @@ from pathlib import Path
 
 import pytest
 
-from rsys.config import ConfigError, load_raw, parse_config
+from rsys.application.config import load_raw, parse_config
+from rsys.application.errors import ConfigError
 from rsys.data.bar_rules import FixtureBarRuleSet
-from rsys.data.events import CorporateActionEvent, QuoteEvent, TimerEvent, TradeEvent
-from rsys.data.quotes import QuoteFreshnessPolicy
+from rsys.data.models import (
+    CorporateActionEvent,
+    QuoteEvent,
+    QuoteFreshnessPolicy,
+    TimerEvent,
+    TradeEvent,
+)
 from rsys.data.timestamps import parse_utc_timestamp_ns
-from rsys.replay import ReplayProfile
-from rsys.replay_runtime import ReplayRunner, SeriesRouter
+from rsys.replay.models import ReplayProfile
+from rsys.replay.runtime import ReplayRunner, SeriesRouter
 
 ROOT = Path(__file__).resolve().parents[1]
 N = 1_000_000_000
@@ -171,7 +177,7 @@ def test_strategy_quote_access_enforces_declared_freshness():
 
 
 def test_phase_cutoffs_and_same_timestamp_context_are_frozen():
-    from rsys.data.keys import ReplayKey
+    from rsys.data.models import ReplayKey
 
     replay, _ = runner([trade("a", 5, 5), trade("b", 5, 5, 120)])
     replay.run_through_key(
@@ -253,7 +259,7 @@ class RecordingObserver:
 
 
 def _future_run(price, *, reverse=False, leaky=False):
-    from rsys.data.events import TradeCorrectionEvent
+    from rsys.data.models import TradeCorrectionEvent
 
     quote = QuoteEvent(
         **COMMON,
@@ -379,7 +385,7 @@ def test_bad_quote_does_not_resurrect_an_older_good_quote():
 
 
 def test_provider_redelivery_does_not_retrigger_completed_bar_observer():
-    from rsys.replay_io import load_events_from_json
+    from rsys.application.replay import load_events_from_json
 
     events = load_events_from_json(ROOT / "fixtures/replay_bar_fixture_events.json")
     original = events[0]
@@ -395,7 +401,7 @@ def test_provider_redelivery_does_not_retrigger_completed_bar_observer():
 
 
 def test_conflicting_provider_revision_fails_before_acceptance():
-    from rsys.replay_io import load_events_from_json
+    from rsys.application.replay import load_events_from_json
 
     original = load_events_from_json(ROOT / "fixtures/replay_bar_fixture_events.json")[
         0

@@ -5,8 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from rsys.calendar import (
-    CalendarCoverageError,
+from rsys.data.calendar import (
     is_early_close,
     is_trading_day,
     session_close_local,
@@ -14,6 +13,7 @@ from rsys.calendar import (
     session_open_utc,
     to_exchange_utc,
 )
+from rsys.data.errors import CalendarCoverageError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_CASES = json.loads((REPO_ROOT / "fixtures" / "data_cases.json").read_text(encoding="utf-8"))

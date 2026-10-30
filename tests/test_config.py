@@ -5,14 +5,9 @@ from typing import Any
 import pytest
 import yaml
 
-from rsys.cli import EXIT_INVALID_CONFIG, EXIT_SUCCESS, main
-from rsys.config import (
-    ConfigError,
-    load_config,
-    load_raw,
-    parse_config,
-    validate_config,
-)
+from rsys.application.config import load_config, load_raw, parse_config, validate_config
+from rsys.application.errors import ConfigError
+from rsys.cli.commands import EXIT_INVALID_CONFIG, EXIT_SUCCESS, main
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_CONFIG = REPO_ROOT / "configs" / "fixture.yaml"
@@ -576,7 +571,7 @@ def test_registered_fixture_only_method_resolves_in_the_registry_itself():
     declared fixture-only method as REGISTERED (useful for e.g. a replay fixture's own
     `bars.rule_set_id`), which is a different question from whether it may satisfy a research
     gate (it may not -- see the regression above)."""
-    from rsys.registry import METHOD_REGISTRY, resolve_method
+    from rsys.application.registry import METHOD_REGISTRY, resolve_method
 
     spec = resolve_method("synthetic_test_net_return:v1")
     assert spec is not None

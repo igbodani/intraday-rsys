@@ -5,11 +5,12 @@ from decimal import Decimal as D
 
 import pytest
 
-from rsys.orders import AcceptedIntent, Position, Proposal
-from rsys.portfolio import Portfolio
-from rsys.sizing import size_quantity
+from rsys.account.models import AcceptedIntent, Position, Proposal
+from rsys.account.portfolio import Portfolio
+from rsys.account.sizing import size_quantity
+from rsys.execution.models import Trade
+from rsys.execution.trade_adapter import TradeExecutionAdapter
 from rsys.strategies.orb import _floor_tick
-from rsys.trade_execution import Trade, TradeExecutionAdapter
 
 
 def account():
@@ -160,7 +161,7 @@ def test_invalid_quantities_fail_before_any_mutation(bad):
 def test_pending_symbol_rejected_even_with_a_different_proposal_id():
     from dataclasses import replace
 
-    from rsys.acceptance import AcceptanceBook
+    from rsys.account.acceptance import AcceptanceBook
 
     p, book = account(), AcceptanceBook()
     proposal = replace(intent().proposal, proposal_id="first", scanner_rank=1)
@@ -171,7 +172,8 @@ def test_pending_symbol_rejected_even_with_a_different_proposal_id():
 
 
 def test_phase_engine_copies_inputs_and_freezes_nested_decision_views():
-    from rsys.phase_engine import PhaseEngine, PhaseEvent
+    from rsys.replay.engine import PhaseEngine
+    from rsys.replay.models import PhaseEvent
 
     captured = []
     engine = PhaseEngine(on_decision=lambda _e, v: captured.append(v))
@@ -187,7 +189,9 @@ def test_phase_engine_copies_inputs_and_freezes_nested_decision_views():
 
 
 def test_phase_duplicate_identity_includes_timing_and_phase():
-    from rsys.phase_engine import PhaseEngine, PhaseEvent, PhaseOrderError
+    from rsys.replay.engine import PhaseEngine
+    from rsys.replay.errors import PhaseOrderError
+    from rsys.replay.models import PhaseEvent
 
     engine = PhaseEngine()
     engine.enqueue(PhaseEvent("a", 100, 20, "publish", "AAA", {"close": 100}))
@@ -198,7 +202,9 @@ def test_phase_duplicate_identity_includes_timing_and_phase():
 
 
 def test_callback_cannot_enqueue_into_its_own_phase():
-    from rsys.phase_engine import PhaseEngine, PhaseEvent, PhaseOrderError
+    from rsys.replay.engine import PhaseEngine
+    from rsys.replay.errors import PhaseOrderError
+    from rsys.replay.models import PhaseEvent
 
     def callback(_):
         engine.enqueue(PhaseEvent("z", 100, 20, "publish"))

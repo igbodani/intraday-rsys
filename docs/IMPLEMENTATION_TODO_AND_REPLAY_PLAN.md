@@ -1,5 +1,7 @@
 # Implementation to-do and next steps: reliable research replay
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 Updated: 2026-10-28 (America/Denver). Based on the uploaded `intraday-rsys` snapshot at commit `457fb88` and the subsequent independent review. Proposed repository destination: `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md`.
 
 This document is an implementation handoff, not a claim that the changes have been built. It supersedes the immediate next-task guidance in the older `NEXT_STEPS.md`; retain the product goals, existing requirement IDs, strategy definitions, and M2/M3 research sequence. Recheck the working branch before editing.

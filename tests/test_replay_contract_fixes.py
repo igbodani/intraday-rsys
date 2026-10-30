@@ -6,10 +6,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from rsys.cli import EXIT_DATA_ERROR, main
-from rsys.config import ConfigError, load_config, load_raw, parse_config
-from rsys.replay_io import ReplayInputError, run_replay_from_config
-from rsys.storage import RunStorage
+from rsys.application.config import load_config, load_raw, parse_config
+from rsys.application.errors import ConfigError
+from rsys.application.replay import run_replay_from_config
+from rsys.cli.commands import EXIT_DATA_ERROR, main
+from rsys.data.errors import ReplayInputError
+from rsys.research.storage import RunStorage
 
 ROOT = Path(__file__).resolve().parents[1]
 

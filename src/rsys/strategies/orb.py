@@ -2,7 +2,7 @@
 
 Standalone completed-bar state machine: COLLECT_RANGE -> ARMED -> PROPOSED ->
 IN_POSITION -> DONE/EXPIRED. Produces `rsys.orders.Proposal` objects; sizing, acceptance
-and execution are external concerns (`rsys.sizing`/`rsys.acceptance`/`rsys.fixture_engine`).
+and execution are external concerns (`rsys.account.sizing`/`rsys.account.acceptance`/`rsys.execution.fixtures`).
 
 The synthetic session runner supplies completed bars from bounded ReplayRunner contexts;
 scanner scores are declared fixture inputs. Real historical scanner features remain pending.
@@ -10,15 +10,13 @@ scanner scores are declared fixture inputs. Real historical scanner features rem
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum
 
-from rsys.money import ceil_step, floor_step
-from rsys.orders import Proposal
+from rsys.account.models import Proposal
+from rsys.account.money import ceil_step, floor_step
+from rsys.strategies.models import TICK, CompletedBar, OrbConfig, OrbState
 
 STRATEGY_ID = "orb_close_cross_v1"
-TICK = Decimal("0.01")
 
 
 def _floor_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
@@ -27,38 +25,6 @@ def _floor_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
 
 def _ceil_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
     return ceil_step(value, tick)
-
-
-class OrbState(str, Enum):
-    COLLECT_RANGE = "COLLECT_RANGE"
-    ARMED = "ARMED"
-    PROPOSED = "PROPOSED"
-    IN_POSITION = "IN_POSITION"
-    DONE = "DONE"
-    EXPIRED = "EXPIRED"
-
-
-@dataclass(frozen=True)
-class CompletedBar:
-    bar_start_ms: int
-    available_at_ms: int
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: Decimal
-
-
-@dataclass
-class OrbConfig:
-    range_minutes: int = 15
-    breakout_buffer_ticks: int = 1
-    base_interval_minutes: int = 1
-    entry_deadline_ms: int | None = (
-        None  # exchange-local ms-of-day; None disables the deadline
-    )
-    target_r: Decimal = Decimal(2)
-    tick: Decimal = TICK
 
 
 class OrbStrategy:

@@ -5,6 +5,7 @@ finer precision; store the canonical value as integer nanoseconds since the
 UTC epoch so no precision is silently dropped, and so two equivalent string
 representations (`...Z` vs `...+00:00`) always compare identical.
 """
+
 from __future__ import annotations
 
 import re
@@ -31,7 +32,9 @@ def parse_utc_timestamp_ns(raw: str) -> int:
 def ns_to_datetime(ns: int) -> datetime:
     """Lossy display/interop conversion (microsecond precision); `ns` remains the source of truth."""
     seconds, remainder_ns = divmod(ns, 1_000_000_000)
-    return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=remainder_ns // 1_000)
+    return datetime.fromtimestamp(seconds, tz=UTC).replace(
+        microsecond=remainder_ns // 1_000
+    )
 
 
 def ns_to_canonical_iso(ns: int) -> str:

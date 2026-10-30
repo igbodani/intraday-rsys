@@ -5,7 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.portfolio import AcceptanceError, Portfolio
+from rsys.account.errors import AcceptanceError
+from rsys.account.portfolio import Portfolio
 
 
 def _p(total="1000", spendable=None, unsettled="0") -> Portfolio:

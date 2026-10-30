@@ -25,35 +25,13 @@ verified mapping is blocked on D12's provider audit, not fabricated here.
 `FixtureBarRuleSet` is the synthetic, declared rule table used for tests --
 named as a fixture, never as verified Alpaca behavior.
 """
+
 from __future__ import annotations
 
-from typing import ClassVar, NamedTuple, Protocol
+from typing import ClassVar, Protocol
 
-
-class FieldEligibility(NamedTuple):
-    open: bool  # contributes to the bucket's open price
-    high: bool  # contributes to the bucket's high extreme
-    low: bool  # contributes to the bucket's low extreme
-    close: bool  # contributes to the bucket's close price
-    volume: bool  # contributes to volume
-    count: bool  # contributes to trade_count (not inferred from volume without a declared rule)
-    vwap: bool  # contributes to the VWAP numerator/denominator
-
-
-class TradeClassificationContext(NamedTuple):
-    """Everything a real classification rule may need, not just the bare conditions tuple.
-
-    `conditions` and `tape` preserve the provider's raw codes verbatim -- including a code that
-    is itself a meaningful space -- never stripped or treated as a blank identifier.
-    """
-
-    conditions: tuple[str, ...] = ()
-    tape: str | None = None
-    interval: str | None = None
-
-
-class UnknownConditionError(Exception):
-    """A trade condition code outside this rule set's declared table."""
+from rsys.data.errors import UnknownConditionError
+from rsys.data.models import FieldEligibility, TradeClassificationContext
 
 
 class BarRuleSet(Protocol):
@@ -63,16 +41,34 @@ class BarRuleSet(Protocol):
 
 
 _FULL_ELIGIBILITY = FieldEligibility(
-    open=True, high=True, low=True, close=True, volume=True, count=True, vwap=True,
+    open=True,
+    high=True,
+    low=True,
+    close=True,
+    volume=True,
+    count=True,
+    vwap=True,
 )
 _VOLUME_ONLY_ELIGIBILITY = FieldEligibility(
-    open=False, high=False, low=False, close=False, volume=True, count=True, vwap=False,
+    open=False,
+    high=False,
+    low=False,
+    close=False,
+    volume=True,
+    count=True,
+    vwap=False,
 )
 # A late-reported/out-of-sequence print: still contributes to close (the provider's declared
 # "last known" price) and volume/count, but must never retroactively move an already-set
 # high/low extreme or distort VWAP with an uncertain fill price.
 _LATE_REPORT_ELIGIBILITY = FieldEligibility(
-    open=False, high=False, low=False, close=True, volume=True, count=True, vwap=False,
+    open=False,
+    high=False,
+    low=False,
+    close=True,
+    volume=True,
+    count=True,
+    vwap=False,
 )
 
 
@@ -97,7 +93,9 @@ class FixtureBarRuleSet:
             return self._TABLE["ALL"]
         unknown = [c for c in conditions if c not in self._TABLE]
         if unknown:
-            raise UnknownConditionError(f"{self.rule_set_id}: unrecognized condition code(s) {unknown}")
+            raise UnknownConditionError(
+                f"{self.rule_set_id}: unrecognized condition code(s) {unknown}"
+            )
         # Combined-condition precedence: the most restrictive declared condition governs,
         # field by field (an unconditional Boolean alone cannot describe every combination).
         eligibilities = [self._TABLE[c] for c in conditions]

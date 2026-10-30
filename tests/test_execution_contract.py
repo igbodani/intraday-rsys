@@ -2,7 +2,7 @@
 (`execution_contract.py`) consolidating `orders.py`, `standalone_run.py`,
 `fixture_engine.py` and `trade_execution.py` execution timing.
 
-These are integration tests against the real `FixtureEngine`/`StandaloneRunner`/
+These are integration tests against the real `FixtureEngine`/`BarSessionRunner`/
 `Portfolio` paths, not only unit tests of the adapter functions in isolation.
 """
 
@@ -12,20 +12,19 @@ from decimal import Decimal as D
 
 import pytest
 
-from rsys.execution_contract import (
+from rsys.account.models import ENTRY_THROUGH_STOP, AcceptedIntent, Position, Proposal
+from rsys.account.portfolio import Portfolio
+from rsys.execution.contracts import (
     ENTRY_PHASE,
     EXIT_PHASE,
-    FillTransition,
-    RejectedEntry,
     commit_entry,
     commit_exit,
     decide_bar_open_entry,
     decide_bar_open_gap_exit,
     from_trade_outcome,
 )
-from rsys.orders import ENTRY_THROUGH_STOP, AcceptedIntent, Position, Proposal
-from rsys.portfolio import Portfolio
-from rsys.trade_execution import FillOutcome, Trade, TradeExecutionAdapter
+from rsys.execution.models import FillOutcome, FillTransition, RejectedEntry, Trade
+from rsys.execution.trade_adapter import TradeExecutionAdapter
 
 
 def account():
@@ -46,8 +45,9 @@ def test_fixture_engine_exits_precede_entries_at_an_equal_timestamp():
     DUPLICATE_PENDING_OR_HELD rule only blocks a *new* `proposal` event while held, so
     this white-box regression injects an already-accepted intent directly -- exactly
     what the shared contract's phase ordering must still arbitrate correctly."""
-    from rsys.fixture_engine import FixtureEngine, PendingExit
-    from rsys.phase_engine import PhaseEvent
+    from rsys.execution.fixtures import FixtureEngine
+    from rsys.execution.models import PendingExit
+    from rsys.replay.models import PhaseEvent
 
     case = {
         "id": "same_time_exit_then_entry",

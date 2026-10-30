@@ -2,10 +2,11 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.data.bars import NormalizedBar, NormalizedBarIdentity
-from rsys.data.events import (
+from rsys.data.models import (
     CorporateActionEvent,
     EventTimeMeaning,
+    NormalizedBar,
+    NormalizedBarIdentity,
     ProviderBarEvent,
     QualityState,
     QuoteEvent,

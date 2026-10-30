@@ -10,13 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from rsys.compare_cli import CompareCliError, compare_run_pair
-from rsys.evaluation import ComparisonError
-from rsys.fixture_cli import run_fixture_cli
-from rsys.fixture_engine import compare_case, run_case
-from rsys.run_cli import RunConfigError, run_cli_entry
-from rsys.standalone_run import IncompleteSessionError
-from rsys.storage import RunStorage
+from rsys.application.errors import RunConfigError
+from rsys.application.run import run_cli_entry
+from rsys.cli.fixtures import run_fixture_cli
+from rsys.execution.errors import IncompleteSessionError
+from rsys.execution.fixtures import compare_case, run_case
+from rsys.research.comparison import compare_run_pair
+from rsys.research.errors import CompareCliError, ComparisonError
+from rsys.research.storage import RunStorage
 
 ROOT = Path(__file__).parents[1]
 

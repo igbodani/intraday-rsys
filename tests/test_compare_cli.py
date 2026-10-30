@@ -1,5 +1,5 @@
 """CLI subprocess tests for `rsys compare` (docs/M2_IMPLEMENTATION_HANDOFF.md step 9,
-comparison subset). Compares `rsys run` (StandaloneRunner) manifests only."""
+comparison subset). Compares `rsys run` (BarSessionRunner) manifests only."""
 from __future__ import annotations
 
 import json

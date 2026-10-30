@@ -7,8 +7,11 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from rsys.standalone_run import ExecutionPolicy, SizingPolicy, StandaloneRunner
-from rsys.strategies.orb import CompletedBar, OrbState, OrbStrategy
+from rsys.account.models import SizingPolicy
+from rsys.execution.bar import BarSessionRunner
+from rsys.execution.models import ExecutionPolicy
+from rsys.strategies.models import CompletedBar, OrbState
+from rsys.strategies.orb import OrbStrategy
 
 CASES_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "strategy_cases.json"
 _S01 = next(c for c in json.loads(CASES_PATH.read_text())["cases"] if c["id"] == "S01")
@@ -35,16 +38,16 @@ _NEXT_OPEN_BAR = {
 }
 
 
-def _build_runner(*, cash="10000", risk_budget=None, max_quantity="10") -> tuple[StandaloneRunner, dict]:
+def _build_runner(*, cash="10000", risk_budget=None, max_quantity="10") -> tuple[BarSessionRunner, dict]:
     strategies = {"AAA": OrbStrategy("AAA", SESSION_OPEN_MS), "BBB": OrbStrategy("BBB", SESSION_OPEN_MS)}
     portfolio_cash = Decimal(cash)
-    from rsys.portfolio import Portfolio
+    from rsys.account.portfolio import Portfolio
     portfolio = Portfolio(total_cash=portfolio_cash, spendable_cash=portfolio_cash, unsettled_cash=Decimal(0))
     sizing = SizingPolicy(
         risk_budget=Decimal(risk_budget) if risk_budget is not None else None,
         max_quantity=Decimal(max_quantity) if max_quantity is not None else None,
     )
-    runner = StandaloneRunner(strategies, portfolio, sizing)
+    runner = BarSessionRunner(strategies, portfolio, sizing)
     bars_aaa = [_bar(raw) for raw in [*_S01["bars"], _NEXT_OPEN_BAR]]
     bars_bbb = [_bar(raw) for raw in [*_S01["bars"], _NEXT_OPEN_BAR]]  # identical breakout, but never a candidate
     scanner_inputs = {_ms("2024-11-29T09:46:00"): {"AAA": (Decimal(2), Decimal("0.03"))}}  # BBB absent: excluded
@@ -107,7 +110,7 @@ def _followup_bar(time_local: str, **overrides) -> dict:
     return base
 
 
-def _run_to_fill_then(followups: list[dict], *, execution: ExecutionPolicy | None = None) -> StandaloneRunner:
+def _run_to_fill_then(followups: list[dict], *, execution: ExecutionPolicy | None = None) -> BarSessionRunner:
     runner, session = _build_runner()
     runner.execution = execution or ExecutionPolicy()
     session["bars"]["AAA"] = [_bar(raw) for raw in [*_S01["bars"], _NEXT_OPEN_BAR, *followups]]
@@ -166,7 +169,7 @@ def test_untouched_entry_interval_keeps_the_position_open():
 
 
 def test_reconciled_metrics_from_a_real_run_match_the_portfolio():
-    from rsys.evaluation import compute_metrics
+    from rsys.research.evaluation import compute_metrics
 
     followup = _followup_bar("2024-11-29T09:48:00", open="90", high="90", low="90", close="90")  # gap stop exit
     starting_equity = Decimal(10000)

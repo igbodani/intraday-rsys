@@ -4,20 +4,25 @@ of any single-session identity."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
-from rsys.calendar import session_duration_minutes
-from rsys.multi_session_evaluation import (
+from rsys.application.models import SessionResult
+from rsys.data.calendar import (
+    session_duration_minutes,
+    session_open_local,
+    session_open_utc,
+)
+from rsys.execution.models import FillRecord
+from rsys.research.models import SessionEquityPoint
+from rsys.research.multi_session import (
     UNAVAILABLE_NO_SESSIONS,
     UNAVAILABLE_NONPOSITIVE_PEAK,
-    SessionEquityPoint,
     compute_drawdown,
     compute_exposure,
     compute_multi_session_metrics,
 )
-from rsys.session_coordinator import SessionResult
-from rsys.standalone_run import FillRecord
 
 REGULAR_DATE = date(2024, 12, 2)
 EARLY_CLOSE_DATE = date(2024, 11, 29)
@@ -25,11 +30,15 @@ REGULAR_SCHEDULED_MS = session_duration_minutes(REGULAR_DATE) * 60_000
 
 
 def _result(session_date, fills, ending_equity) -> SessionResult:
+    opening = session_open_local(session_date)
+    open_ms = (opening.hour * 60 + opening.minute) * 60_000
     return SessionResult(
         session_date=session_date,
-        session_open_ns=0,
+        session_open_ns=int(session_open_utc(session_date).timestamp()) * 1_000_000_000,
         decisions=[],
-        fills=fills,
+        # Test examples describe elapsed times; SessionResult uses the actual runner's
+        # exchange-local midnight convention, never a test-only zero origin.
+        fills=[replace(f, available_at_ms=f.available_at_ms + open_ms) for f in fills],
         contexts=[],
         ending_equity=ending_equity,
     )

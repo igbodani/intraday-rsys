@@ -6,9 +6,10 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.acceptance import AcceptanceBook, sort_proposals
-from rsys.orders import NO_CURRENT_RANK, Proposal
-from rsys.portfolio import AcceptanceError, Portfolio
+from rsys.account.acceptance import AcceptanceBook, sort_proposals
+from rsys.account.errors import AcceptanceError
+from rsys.account.models import NO_CURRENT_RANK, Proposal
+from rsys.account.portfolio import Portfolio
 
 
 def _proposal(symbol, rank=None, time_ms=0, strategy_id="fixture", proposal_id=None) -> Proposal:

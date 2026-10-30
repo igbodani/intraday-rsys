@@ -1,7 +1,11 @@
 import pytest
 
-from rsys.data.events import TimingLabel
-from rsys.data.manifest import CoverageExclusion, ExclusionReason, UniverseManifest
+from rsys.data.models import (
+    CoverageExclusion,
+    ExclusionReason,
+    TimingLabel,
+    UniverseManifest,
+)
 
 
 def _manifest(**overrides) -> UniverseManifest:

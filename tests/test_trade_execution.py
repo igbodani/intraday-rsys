@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from rsys.orders import AcceptedIntent, Position, Proposal
-from rsys.trade_execution import FILLED, SKIPPED, Trade, TradeExecutionAdapter
+from rsys.account.models import AcceptedIntent, Position, Proposal
+from rsys.execution.models import Trade
+from rsys.execution.trade_adapter import FILLED, SKIPPED, TradeExecutionAdapter
 
 
 def _intent(*, decision_time_ms=1_000, decision_latency_ms=0, stop="98") -> AcceptedIntent:

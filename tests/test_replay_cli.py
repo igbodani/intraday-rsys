@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from rsys.cli import EXIT_DATA_ERROR, EXIT_SUCCESS, main
+from rsys.cli.commands import EXIT_DATA_ERROR, EXIT_SUCCESS, main
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPLAY_BAR_CONFIG = REPO_ROOT / "configs" / "replay_bar_fixture.yaml"
@@ -63,8 +63,8 @@ def test_repeated_replay_runs_produce_identical_semantic_trace_hashes_but_distin
     """R3-C/IR-05: fresh run IDs/attempt directories/wall-clock each time, but identical
     semantic trace hashes for identical inputs/config/code -- and BOTH attempts remain
     retained and readable afterward (R3I-05: `--out auto` must never reuse a fixed directory)."""
-    from rsys.config import load_config
-    from rsys.replay_io import run_replay_from_config
+    from rsys.application.config import load_config
+    from rsys.application.replay import run_replay_from_config
 
     config = load_config(REPLAY_TRADE_CONFIG)
     out_dir_1 = tmp_path / "run1"
@@ -89,8 +89,8 @@ def test_repeated_replay_runs_produce_identical_semantic_trace_hashes_but_distin
 def test_reversed_input_order_yields_the_same_semantic_trace_hash(tmp_path):
     """Acceptance (section 6): reverse input file/page order with event identities and source
     metadata unchanged; trace content remains identical."""
-    from rsys.config import load_config
-    from rsys.replay_io import load_events_from_json, run_replay_from_config
+    from rsys.application.config import load_config
+    from rsys.application.replay import load_events_from_json, run_replay_from_config
 
     config = load_config(REPLAY_TRADE_CONFIG)
     events = load_events_from_json(config.input)
@@ -104,7 +104,7 @@ def test_reversed_input_order_yields_the_same_semantic_trace_hash(tmp_path):
 
 
 def _run_with_reversed_events(config, events, out_dir):
-    from rsys.replay_io import run_replay_from_config
+    from rsys.application.replay import run_replay_from_config
     # Exercise the exact public path on reversed source records, not a test-only runner.
     data = json.loads(Path(config.input).read_text(encoding="utf-8"))
     data["events"] = list(reversed(data["events"]))
@@ -131,7 +131,7 @@ def test_truncated_input_without_a_coverage_timer_is_an_explicit_non_successful_
     assert manifest["complete"] is False
     assert manifest["incomplete_reason"] is not None
 
-    from rsys.storage import RunStorage
+    from rsys.research.storage import RunStorage
     storage = RunStorage(out_dir)
     run_id = manifest["run_id"]
     record = storage.load_record(run_id)
@@ -143,8 +143,8 @@ def test_truncated_input_without_a_coverage_timer_is_an_explicit_non_successful_
 # ---- IR-05 / R3I-03: a provider-price change must change the trace and its semantic hash ----
 
 def test_provider_price_change_changes_trace_and_semantic_hash(tmp_path):
-    from rsys.config import load_config
-    from rsys.replay_io import run_replay_from_config
+    from rsys.application.config import load_config
+    from rsys.application.replay import run_replay_from_config
 
     config = load_config(REPLAY_BAR_CONFIG)
     baseline = run_replay_from_config(config, tmp_path / "baseline")
@@ -168,8 +168,9 @@ def test_provider_price_change_changes_trace_and_semantic_hash(tmp_path):
 # ---- IR-05 / R3I-04: a future quote must never change an earlier quote's trace row ----
 
 def test_quote_trace_prefix_is_unchanged_by_future_quotes(tmp_path):
-    from rsys.config import ReplayConfig, load_config
-    from rsys.replay_io import run_replay_from_config
+    from rsys.application.config import load_config
+    from rsys.application.models import ReplayConfig
+    from rsys.application.replay import run_replay_from_config
 
     config = load_config(REPLAY_TRADE_CONFIG)
     quote_config = config.model_copy(update={
@@ -219,8 +220,8 @@ def test_quote_trace_prefix_is_unchanged_by_future_quotes(tmp_path):
 def test_early_unrelated_timer_cannot_complete_truncated_replay(tmp_path):
     """R3I-06 regression: at 7084d4a, a trade at second 5 plus an unrelated heartbeat timer at
     second 6 produced complete=true merely because SOME timer existed in the stream."""
-    from rsys.config import load_config
-    from rsys.replay_io import run_replay_from_config
+    from rsys.application.config import load_config
+    from rsys.application.replay import run_replay_from_config
 
     config = load_config(REPLAY_TRADE_CONFIG)
     data = {

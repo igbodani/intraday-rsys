@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.data.events import (
+from rsys.data.models import (
     EventTimeMeaning,
     ProviderBarEvent,
     QualityState,
@@ -10,8 +10,9 @@ from rsys.data.events import (
     TradeEvent,
 )
 from rsys.data.timestamps import parse_utc_timestamp_ns
-from rsys.replay import ReplayProfile, replay_order
-from rsys.views import ClosedOnlyContext, IntrabarContext, ReplayView
+from rsys.replay.clock import replay_order
+from rsys.replay.models import ReplayProfile
+from rsys.replay.views import ClosedOnlyContext, IntrabarContext, ReplayView
 
 T0 = parse_utc_timestamp_ns("2024-06-10T13:30:00Z")
 T1 = parse_utc_timestamp_ns("2024-06-10T13:31:00Z")
@@ -154,7 +155,7 @@ def test_latest_trade_at_a_tied_availability_returns_the_last_dispatched_not_the
 
 
 def test_latest_quote_at_a_tied_availability_returns_the_last_dispatched():
-    from rsys.data.events import QuoteEvent
+    from rsys.data.models import QuoteEvent
 
     def _quote(event_id, at_ns, *, source_sequence):
         return QuoteEvent(

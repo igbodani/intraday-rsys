@@ -10,17 +10,17 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from rsys.features import (
+from rsys.data.features import (
     MISSING_PREVIOUS_CLOSE,
     MISSING_SELECTED_HISTORY,
     MIXED_FEED_FEATURE,
     ZERO_DENOMINATOR,
-    HistorySession,
     compute_cumulative_rvol,
     compute_dollar_volume_eligible,
     compute_session_gain,
     convert_split_units,
 )
+from rsys.data.models import HistorySession
 
 CASES = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "data_cases.json").read_text()
