@@ -4,9 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from rsys import storage as storage_module
-from rsys.experiments import (
-    canonical_hash,
+from rsys.research import storage as storage_module
+from rsys.research.errors import (
+    FrozenFieldError,
+    IllegalTransitionError,
+    InvalidRunIdError,
+    RecoveryInProgressError,
+    RunAlreadyExistsError,
+    TerminalOutcomeConflictError,
+)
+from rsys.research.experiments import (
     compute_code_revision,
     compute_dependency_lock_hash,
     compute_source_fingerprint,
@@ -16,15 +23,7 @@ from rsys.experiments import (
     run_context,
     start_run,
 )
-from rsys.storage import (
-    FrozenFieldError,
-    IllegalTransitionError,
-    InvalidRunIdError,
-    RecoveryInProgressError,
-    RunAlreadyExistsError,
-    RunStorage,
-    TerminalOutcomeConflictError,
-)
+from rsys.research.storage import RunStorage, canonical_hash
 
 NO_DATA = {"data_not_applicable_reason": "fixture-only synthetic test run, no external input data"}
 
@@ -544,7 +543,7 @@ def test_reloaded_pending_record_without_explicit_redactor_withholds_error_text_
 def test_reloaded_record_with_explicit_redactor_still_scrubs_the_canary(tmp_path):
     """Repeat with an explicitly supplied runtime redactor: full (redacted) error text is
     preserved, proving the redactor -- not reload luck -- drives the behavior."""
-    from rsys.experiments import SecretRedactor
+    from rsys.research.experiments import SecretRedactor
 
     storage = _storage(tmp_path)
     secret_config = {"api_key": "FAKE_SECRET_CANARY"}
@@ -656,7 +655,7 @@ def test_compute_source_fingerprint_includes_a_nested_data_package(tmp_path):
 def test_compute_source_fingerprint_still_excludes_root_level_data_and_runs(tmp_path):
     """Root-level /data and /runs output directories are excluded; neither is reachable by the
     declared source globs today, but the policy itself must not depend on glob coincidence."""
-    from rsys.experiments import _is_excluded
+    from rsys.research.experiments import _is_excluded
 
     assert _is_excluded(Path("data/cache.json"))
     assert _is_excluded(Path("runs/some-run/record.json"))

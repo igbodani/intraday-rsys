@@ -7,20 +7,20 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.data.bar_builder import (
-    BarSnapshot,
+from rsys.data.bar_builder import TradeBarBuilder
+from rsys.data.bar_rules import FixtureBarRuleSet
+from rsys.data.bar_version_store import BarVersionStore
+from rsys.data.errors import (
     ConflictingTradeError,
     MismatchedSeriesError,
     RejectedQualityError,
-    SnapshotStatus,
-    TradeBarBuilder,
     UnresolvedCorrectionError,
 )
-from rsys.data.bar_rules import FixtureBarRuleSet
-from rsys.data.bar_version_store import BarVersionStore
-from rsys.data.events import (
+from rsys.data.models import (
+    BarSnapshot,
     EventTimeMeaning,
     QualityState,
+    SnapshotStatus,
     TimingLabel,
     TradeCorrectionEvent,
     TradeEvent,

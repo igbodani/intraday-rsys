@@ -1,5 +1,7 @@
 # Coding-agent handoff: finish M0, then build the replay path
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 Updated: 2026-10-28. Applies to the reviewed `intraday-rsys.zip` snapshot. Recheck the checkout before implementing; do not assume a later branch still has the same defects.
 
 **Superseded (2026-10-28):** `docs/IMPLEMENTATION_TODO_AND_REPLAY_PLAN.md` now supersedes this file's next-task guidance (M0-01/M0-02 are built; that plan's H1/H2 close gaps an independent review found in them, and D1/R1-R3 replace the `M1-02` row below with typed market events, a trade-driven bar builder, and replay wiring). Use that document for current ordering; this file is retained for historical context on the original M0-01/M0-02 defects.

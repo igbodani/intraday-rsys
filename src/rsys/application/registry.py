@@ -1,0 +1,529 @@
+"""Parameter registry: proposed values, valid ranges and decision dependencies.
+
+Mirrors the "Parameter registry" table in docs/contracts.md and the decision
+register in docs/decisions.md. This module does not invent values; it only
+records what the docs already state, so registry entries must stay in sync
+with those two files if they change.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from typing import Any
+
+from rsys.application.models import MethodSpec, ParameterSpec
+from rsys.application.validation import (
+    _fraction_0_1,
+    _non_empty_str,
+    _non_empty_str_list,
+    _nonnegative,
+    _positive_int,
+    _positive_number,
+)
+
+_METHOD_REFERENCE_RE = re.compile(r"^[a-z][a-z0-9_]*:v[0-9]+$")
+
+
+def _method_spec(ref: str) -> MethodSpec:
+    method_id, _, version_part = ref.rpartition(":v")
+    return MethodSpec(
+        method_id=method_id,
+        version=int(version_part),
+        evidence_class="fixture_only",
+        content_hash=hashlib.sha256(ref.encode("utf-8")).hexdigest(),
+    )
+
+
+# Declared fixture-only method references usable in synthetic tests/examples. A reference
+# merely matching `name:vN` syntax is not registered here and must still block (C08); the
+# in-repo full-synthetic-profile test exercises exactly this set.
+_DECLARED_METHOD_REFS = (
+    "synthetic_test_block_bootstrap:v1",
+    "synthetic_test_net_return:v1",
+    "synthetic_test_paired_delta:v1",
+    "synthetic_test_ci_excludes_zero:v1",
+    "synthetic_test_still_passes:v1",
+    "synthetic_test_max_30pct_one_symbol:v1",
+    "synthetic_test_herfindahl:v1",
+    "synthetic_test_min_20_trades:v1",
+    "synthetic_test_halt_and_review:v1",
+)
+
+METHOD_REGISTRY: dict[str, MethodSpec] = {
+    ref: _method_spec(ref) for ref in _DECLARED_METHOD_REFS
+}
+
+
+def resolve_method(v: Any) -> MethodSpec | None:
+    """Resolve a syntactically well-formed, REGISTERED method reference to its spec, or `None`
+    if it does not even parse as `name:vN` or was never registered (C08). This answers only
+    "is this a known declared method", never "may it satisfy a research gate" -- see
+    `_is_method_reference` for that separate, stricter question (IR-04/R3I-09)."""
+    if not isinstance(v, str) or _METHOD_REFERENCE_RE.fullmatch(v) is None:
+        return None
+    return METHOD_REGISTRY.get(v)
+
+
+def _is_method_reference(v: Any) -> bool:
+    """A RESEARCH gate requires a research-approved specification (IR-04/R3I-09): a registered
+    `fixture_only` method resolves (see `resolve_method`) but must never satisfy a research
+    gate merely because it is syntactically well-formed and registered -- D17 stays open until
+    a real method is approved and registered with `evidence_class="research_approved"`. No
+    currently registered method is research-approved, so this can never pass today regardless
+    of which declared reference is cited.
+    """
+    spec = resolve_method(v)
+    return spec is not None and spec.evidence_class == "research_approved"
+
+
+# Field paths use dotted notation relative to the research config root.
+REGISTRY: dict[str, ParameterSpec] = {
+    "base_interval_minutes": ParameterSpec(
+        "base_interval_minutes",
+        "minutes",
+        "proposed",
+        "D05",
+        "1 in v1; extensions require parity tests",
+        lambda v: v == 1,
+    ),
+    "scanner.top_n": ParameterSpec(
+        "scanner.top_n",
+        "count",
+        "proposed",
+        "D14",
+        "Integer 1-500; cannot exceed eligible symbols",
+        lambda v: isinstance(v, int) and 1 <= v <= 500,
+    ),
+    "scanner.lookback_sessions": ParameterSpec(
+        "scanner.lookback_sessions",
+        "sessions",
+        "proposed",
+        "D14",
+        "Integer 2-252; requires full selected history",
+        lambda v: isinstance(v, int) and 2 <= v <= 252,
+    ),
+    "scanner.max_lookback_calendar_sessions": ParameterSpec(
+        "scanner.max_lookback_calendar_sessions",
+        "sessions",
+        "proposed",
+        "D14",
+        "Integer >= lookback_sessions",
+        _positive_int,
+    ),
+    "scanner.min_prior_dollar_volume": ParameterSpec(
+        "scanner.min_prior_dollar_volume",
+        "USD",
+        "open",
+        "D12",
+        "Positive USD threshold; requires data audit",
+        _positive_number,
+    ),
+    "reporting.ranking_storage": ParameterSpec(
+        "reporting.ranking_storage",
+        "enum",
+        "proposed",
+        "D21",
+        "compact, proposals or full; full requires a bounded diagnostic run",
+        lambda v: v in ("compact", "proposals", "full"),
+    ),
+    "strategy.range_minutes": ParameterSpec(
+        "strategy.range_minutes",
+        "minutes",
+        "proposed",
+        "D15",
+        "1-60; integer multiple of base interval",
+        lambda v: isinstance(v, int) and 1 <= v <= 60,
+    ),
+    "strategy.breakout_buffer_ticks": ParameterSpec(
+        "strategy.breakout_buffer_ticks",
+        "ticks",
+        "proposed",
+        "D15",
+        "Integer 0-10; applied using instrument tick",
+        lambda v: isinstance(v, int) and 0 <= v <= 10,
+    ),
+    "exit.target_r": ParameterSpec(
+        "exit.target_r",
+        "R multiple",
+        "proposed",
+        "D15",
+        "Positive finite value; baseline search candidate 1-4",
+        lambda v: float(v) > 0,
+    ),
+    "exit.maximum_hold_minutes": ParameterSpec(
+        "exit.maximum_hold_minutes",
+        "minutes",
+        "proposed",
+        "D15",
+        "Positive multiple of base interval; flatten may occur earlier",
+        _positive_int,
+    ),
+    "strategy.entry_cutoff_local": ParameterSpec(
+        "strategy.entry_cutoff_local",
+        "exchange-local time",
+        "proposed",
+        "D15",
+        "Must precede flatten time",
+    ),
+    "exit.flatten_buffer_minutes": ParameterSpec(
+        "exit.flatten_buffer_minutes",
+        "minutes",
+        "proposed",
+        "D15",
+        "At least one base bar; less than session duration",
+        _positive_int,
+    ),
+    "strategy.max_fills_per_symbol_day": ParameterSpec(
+        "strategy.max_fills_per_symbol_day",
+        "count",
+        "proposed",
+        "D15",
+        "Positive integer; v1 proposed baseline 1",
+        _positive_int,
+    ),
+    "feed": ParameterSpec(
+        "feed",
+        "provider feed id",
+        "open",
+        "D12",
+        "Feed entitlement and coverage must be audited first",
+        _non_empty_str,
+    ),
+    "data_manifest": ParameterSpec(
+        "data_manifest",
+        "manifest ref",
+        "open",
+        "D12",
+        "Coverage manifest must be produced by the data audit",
+        _non_empty_str,
+    ),
+    "account.profile": ParameterSpec(
+        "account.profile",
+        "profile id",
+        "open",
+        "D09",
+        "Requires verified Alpaca account profile",
+        _non_empty_str,
+    ),
+    "account.quantity_step": ParameterSpec(
+        "account.quantity_step",
+        "shares",
+        "open",
+        "D09",
+        "Requires verified whole/fractional share rules",
+        _positive_number,
+    ),
+    "account.minimum_quantity": ParameterSpec(
+        "account.minimum_quantity",
+        "shares",
+        "open",
+        "D09",
+        "Requires verified minimum order size",
+        _nonnegative,
+    ),
+    "account.proceeds_availability": ParameterSpec(
+        "account.proceeds_availability",
+        "policy id",
+        "open",
+        "D09",
+        "Requires verified settlement/proceeds policy",
+        _non_empty_str,
+    ),
+    "risk.fraction_per_trade": ParameterSpec(
+        "risk.fraction_per_trade",
+        "fraction of equity",
+        "open",
+        "D10",
+        "Requires confirmed per-trade risk limit",
+        _fraction_0_1,
+    ),
+    "risk.daily_loss_limit_usd": ParameterSpec(
+        "risk.daily_loss_limit_usd",
+        "USD",
+        "open",
+        "D10",
+        "Requires confirmed daily loss stop",
+        _positive_number,
+    ),
+    "risk.drawdown_limit_fraction": ParameterSpec(
+        "risk.drawdown_limit_fraction",
+        "fraction of equity",
+        "open",
+        "D10",
+        "Requires confirmed drawdown ceiling",
+        _fraction_0_1,
+    ),
+    "risk.max_positions": ParameterSpec(
+        "risk.max_positions",
+        "count",
+        "open",
+        "D10",
+        "Requires confirmed simultaneous-position limit",
+        _positive_int,
+    ),
+    "risk.max_position_notional_usd": ParameterSpec(
+        "risk.max_position_notional_usd",
+        "USD",
+        "open",
+        "D10",
+        "Requires confirmed exposure cap",
+        _positive_number,
+    ),
+    "execution.spread_bps": ParameterSpec(
+        "execution.spread_bps",
+        "basis points",
+        "open",
+        "D11",
+        "Requires confirmed cost/latency assumptions",
+        _nonnegative,
+    ),
+    "execution.slippage_bps": ParameterSpec(
+        "execution.slippage_bps",
+        "basis points",
+        "open",
+        "D11",
+        "Requires confirmed cost/latency assumptions",
+        _nonnegative,
+    ),
+    "execution.fee_profile": ParameterSpec(
+        "execution.fee_profile",
+        "profile id",
+        "open",
+        "D11",
+        "Requires confirmed fee schedule",
+        _non_empty_str,
+    ),
+    "execution.feed_delay_ms": ParameterSpec(
+        "execution.feed_delay_ms",
+        "milliseconds",
+        "open",
+        "D11",
+        "Requires confirmed feed delay",
+        _nonnegative,
+    ),
+    "execution.decision_latency_ms": ParameterSpec(
+        "execution.decision_latency_ms",
+        "milliseconds",
+        "open",
+        "D11",
+        "Requires confirmed decision latency",
+        _nonnegative,
+    ),
+    "experiment.development_start": ParameterSpec(
+        "experiment.development_start",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.development_end": ParameterSpec(
+        "experiment.development_end",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.validation_start": ParameterSpec(
+        "experiment.validation_start",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.validation_end": ParameterSpec(
+        "experiment.validation_end",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.final_start": ParameterSpec(
+        "experiment.final_start",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.final_end": ParameterSpec(
+        "experiment.final_end",
+        "date",
+        "open",
+        "D16",
+        "Requires frozen chronological split",
+    ),
+    "experiment.trial_budget": ParameterSpec(
+        "experiment.trial_budget",
+        "count",
+        "open",
+        "D16",
+        "Requires a bounded, registered trial budget",
+        _positive_int,
+    ),
+    "experiment.seed": ParameterSpec(
+        "experiment.seed",
+        "seed value",
+        "open",
+        "D16",
+        "Requires a declared seed for reproducibility",
+    ),
+    # D17 promotion gates: one leaf per required field in the experiments.md "Promotion contract"
+    # table, grouped to mirror that table's rows. `promotion_gates: {}` leaves every leaf at None,
+    # so it is exactly as unresolved as `promotion_gates: null` -- no longer silently satisfied.
+    "promotion_gates.minimum_observations.minimum_evaluation_days": ParameterSpec(
+        "promotion_gates.minimum_observations.minimum_evaluation_days",
+        "days",
+        "open",
+        "D17",
+        "Requires frozen minimum evaluation-day count",
+        _positive_int,
+    ),
+    "promotion_gates.minimum_observations.minimum_evaluation_trades": ParameterSpec(
+        "promotion_gates.minimum_observations.minimum_evaluation_trades",
+        "count",
+        "open",
+        "D17",
+        "Requires frozen minimum evaluation-trade count",
+        _positive_int,
+    ),
+    "promotion_gates.minimum_observations.dependent_observation_treatment": ParameterSpec(
+        "promotion_gates.minimum_observations.dependent_observation_treatment",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned treatment for dependent observations",
+        _is_method_reference,
+    ),
+    "promotion_gates.net_return.net_return_requirement": ParameterSpec(
+        "promotion_gates.net_return.net_return_requirement",
+        "fraction or USD",
+        "open",
+        "D17",
+        "Requires frozen positive net-return target (deposits excluded)",
+        _positive_number,
+    ),
+    "promotion_gates.net_return.metric_definition": ParameterSpec(
+        "promotion_gates.net_return.metric_definition",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned net-return metric definition",
+        _is_method_reference,
+    ),
+    "promotion_gates.control_improvement.control_id": ParameterSpec(
+        "promotion_gates.control_improvement.control_id",
+        "control id",
+        "open",
+        "D17",
+        "Requires a declared control to compare against",
+        _non_empty_str,
+    ),
+    "promotion_gates.control_improvement.improvement_measure": ParameterSpec(
+        "promotion_gates.control_improvement.improvement_measure",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned paired-improvement measure",
+        _is_method_reference,
+    ),
+    "promotion_gates.drawdown.drawdown_ceiling": ParameterSpec(
+        "promotion_gates.drawdown.drawdown_ceiling",
+        "fraction of equity",
+        "open",
+        "D17",
+        "Requires a frozen maximum permitted drawdown",
+        _fraction_0_1,
+    ),
+    "promotion_gates.uncertainty.confidence_level": ParameterSpec(
+        "promotion_gates.uncertainty.confidence_level",
+        "fraction",
+        "open",
+        "D17",
+        "Requires a frozen confidence level",
+        _fraction_0_1,
+    ),
+    "promotion_gates.uncertainty.resampling_design": ParameterSpec(
+        "promotion_gates.uncertainty.resampling_design",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned daily/block resampling design",
+        _is_method_reference,
+    ),
+    "promotion_gates.uncertainty.acceptance_criterion": ParameterSpec(
+        "promotion_gates.uncertainty.acceptance_criterion",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned uncertainty acceptance criterion",
+        _is_method_reference,
+    ),
+    "promotion_gates.cost_stress.scenarios": ParameterSpec(
+        "promotion_gates.cost_stress.scenarios",
+        "scenario list",
+        "open",
+        "D17",
+        "Requires at least one declared, nonblank cost/delay stress scenario",
+        _non_empty_str_list,
+    ),
+    "promotion_gates.cost_stress.acceptance_criteria": ParameterSpec(
+        "promotion_gates.cost_stress.acceptance_criteria",
+        "method ref",
+        "open",
+        "D17",
+        "Requires declared, versioned cost-stress acceptance criteria",
+        _is_method_reference,
+    ),
+    "promotion_gates.concentration.limits": ParameterSpec(
+        "promotion_gates.concentration.limits",
+        "method ref",
+        "open",
+        "D17",
+        "Requires declared, versioned symbol/period/winner concentration limits",
+        _is_method_reference,
+    ),
+    "promotion_gates.concentration.diagnostics": ParameterSpec(
+        "promotion_gates.concentration.diagnostics",
+        "method ref",
+        "open",
+        "D17",
+        "Requires declared, versioned concentration diagnostics",
+        _is_method_reference,
+    ),
+    "promotion_gates.paper_observation.forward_duration_days": ParameterSpec(
+        "promotion_gates.paper_observation.forward_duration_days",
+        "days",
+        "open",
+        "D17",
+        "Requires a frozen forward paper-observation duration",
+        _positive_int,
+    ),
+    "promotion_gates.paper_observation.sample_requirement": ParameterSpec(
+        "promotion_gates.paper_observation.sample_requirement",
+        "method ref",
+        "open",
+        "D17",
+        "Requires a declared, versioned paper-observation sample requirement",
+        _is_method_reference,
+    ),
+    "promotion_gates.paper_observation.incident_handling": ParameterSpec(
+        "promotion_gates.paper_observation.incident_handling",
+        "method ref",
+        "open",
+        "D17",
+        "Requires declared, versioned paper-observation incident handling",
+        _is_method_reference,
+    ),
+    "data_adjustment.symbol_mapping_asof": ParameterSpec(
+        "data_adjustment.symbol_mapping_asof",
+        "asof ref",
+        "open",
+        "D13",
+        "Requires audited historical universe mapping",
+        _non_empty_str,
+    ),
+}
+
+
+def get_spec(field_path: str) -> ParameterSpec | None:
+    return REGISTRY.get(field_path)

@@ -1,5 +1,7 @@
 # Intraday research system: corrections and R3 implementation handoff
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 > Historical handoff/completion record. The later review reproduced failures despite the tests recorded here. `R3_REPAIR_RESULTS.md` and the R3SAFE requirements now supersede runtime claims, completion counts and migration instructions in this document. Preserve this file for traceability; its checked boxes are not independent proof of the newer guarantees.
 
 Prepared: 2026-10-29 UTC. Review baseline: uploaded `intraday-rsys(1).zip`, Git HEAD `3bb1dad`.

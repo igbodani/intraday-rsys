@@ -1,11 +1,8 @@
 import pytest
 
-from rsys.data.bar_rules import (
-    FieldEligibility,
-    FixtureBarRuleSet,
-    TradeClassificationContext,
-    UnknownConditionError,
-)
+from rsys.data.bar_rules import FixtureBarRuleSet
+from rsys.data.errors import UnknownConditionError
+from rsys.data.models import FieldEligibility, TradeClassificationContext
 
 RULES = FixtureBarRuleSet()
 

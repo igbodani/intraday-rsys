@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from rsys.scanner import (
+from rsys.strategies.models import CandidateInput
+from rsys.strategies.scanner import (
     MISSING_GAIN,
     MISSING_RVOL,
     NOT_ELIGIBLE,
     RANKING_JSON_VERSION,
-    CandidateInput,
     rank_candidates,
     ranking_digest,
     ranking_evidence,

@@ -8,60 +8,40 @@ produces a correct result (BAR-007). Each returned `BarSnapshot` is an
 immutable, freshly-built object; nothing about an earlier snapshot ever
 changes after the fact (BAR-010).
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict
-
-from rsys.data.actions import CorporateAction
-from rsys.data.bar_rules import BarRuleSet, FieldEligibility, TradeClassificationContext
-from rsys.data.bars import INTERVAL_DURATIONS_NS
-from rsys.data.events import QualityState, TradeCorrectionEvent, TradeEvent
+from rsys.data.bar_rules import BarRuleSet
+from rsys.data.errors import (
+    ConflictingTradeError,
+    EvictedBucketError,
+    MismatchedSeriesError,
+    RejectedQualityError,
+    UnresolvedCorrectionError,
+    UnsupportedSplitOverlapError,
+)
+from rsys.data.models import (
+    BarSnapshot,
+    CorporateAction,
+    QualityState,
+    SnapshotStatus,
+    TradeClassificationContext,
+    TradeCorrectionEvent,
+    TradeEvent,
+    _Contributor,
+)
+from rsys.data.timestamps import INTERVAL_DURATIONS_NS
 
 if TYPE_CHECKING:
     from rsys.data.bar_version_store import BarVersionStore
 
 
-class SnapshotStatus(StrEnum):
-    FORMING = "forming"
-    CLOSED_AS_OF = "closed_as_of"
-    REVISED = "revised"
-    # IR-03/R3I-07: a bucket whose interval straddled a corporate action's dispatch moment --
-    # never a normal-looking mixed-unit bar, explicitly invalidated instead.
-    INVALIDATED = "invalidated"
-
-
-class UnresolvedCorrectionError(Exception):
-    """A correction/cancel references a trade_id this builder never accepted (or has evicted)."""
-
-
-class ConflictingTradeError(Exception):
-    """A second delivery under the same trade_id with a different payload, with no correction."""
-
-
-class MismatchedSeriesError(Exception):
-    """An event for a different instrument/feed was routed at this builder (C05): the builder
-    independently rejects it before any mutation, regardless of what the caller believes."""
-
-
-class RejectedQualityError(Exception):
-    """An event whose quality_state is not 'ok' cannot mutate builder state (C05); suspect/
-    invalid/unavailable observations are quarantined, never silently treated as valid."""
-
-
-class EvictedBucketError(Exception):
-    """The bucket's contributor detail was evicted under the retention policy; its effect on a
-    late correction is explicitly unresolved, never silently applied or silently ignored."""
-
-
-class UnsupportedSplitOverlapError(Exception):
-    """A bucket interval straddles a split's dispatch moment, mixing old/new price units."""
-
-
-def raise_if_bucket_straddles_action(bucket_start_ns: int, bucket_end_ns: int, action: CorporateAction) -> None:
+def raise_if_bucket_straddles_action(
+    bucket_start_ns: int, bucket_end_ns: int, action: CorporateAction
+) -> None:
     """A bucket whose interval straddles a split's effective moment cannot be finalized as a
     single consistent-unit bar; block it rather than mix pre/post-split contributions (BAR-012).
     """
@@ -70,49 +50,6 @@ def raise_if_bucket_straddles_action(bucket_start_ns: int, bucket_end_ns: int, a
         raise UnsupportedSplitOverlapError(
             f"bucket [{bucket_start_ns}, {bucket_end_ns}) straddles action dispatch at {dispatch_ns}"
         )
-
-
-class BarSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    instrument_id: str
-    feed: str
-    interval: str
-    bar_start_ns: int
-    bar_end_ns: int
-    available_at_ns: int
-    status: SnapshotStatus
-    revision: int  # number of post-closure revisions applied; 0 while FORMING or just closed
-    open: Decimal | None
-    high: Decimal | None
-    low: Decimal | None
-    close: Decimal | None
-    volume: Decimal
-    trade_count: int
-    vwap_numerator: Decimal
-    vwap_denominator: Decimal
-    rule_set_id: str
-    # D20: this builder only ever operates on raw trade prices (never unit-adjusts); recorded
-    # explicitly so a parity comparator can check unit-basis compatibility (IR-06/R3I-14)
-    # instead of assuming agreement.
-    adjustment_mode: str = "raw"
-    publication_phase: int = 37
-    publication_sequence: int | None = None
-    provider: str | None = None
-    session_version: str | None = None
-
-
-class _Contributor:
-    __slots__ = ("active", "eligibility", "event_time_ns", "price", "size", "trade_id")
-
-    def __init__(self, trade_id: str, event_time_ns: int, price: Decimal, size: Decimal,
-                 eligibility: FieldEligibility, active: bool = True):
-        self.trade_id = trade_id
-        self.event_time_ns = event_time_ns
-        self.price = price
-        self.size = size
-        self.eligibility = eligibility
-        self.active = active
 
 
 class TradeBarBuilder:
@@ -149,7 +86,9 @@ class TradeBarBuilder:
         self._closed: set[int] = set()
         self._post_close_revisions: dict[int, int] = {}
         self._evicted: set[int] = set()
-        self._trade_id_bucket: dict[str, int] = {}  # survives eviction, unlike self._buckets
+        self._trade_id_bucket: dict[
+            str, int
+        ] = {}  # survives eviction, unlike self._buckets
         # (original_trade_id, action, price, size, conditions) keyed by the correction's OWN
         # event_id, so a redelivered correction is detected as idempotent rather than counted as
         # a second revision (R3I-11), and a same-ID/different-payload redelivery is a conflict.
@@ -163,7 +102,9 @@ class TradeBarBuilder:
         bucket it starts, not the one it closes (BAR-002)."""
         return (event_time_ns // self._duration_ns) * self._duration_ns
 
-    def _check_series_and_quality(self, event: TradeEvent | TradeCorrectionEvent) -> None:
+    def _check_series_and_quality(
+        self, event: TradeEvent | TradeCorrectionEvent
+    ) -> None:
         """C05: the builder independently rejects a mismatched-series or non-OK-quality event
         before any mutation -- a wrong-instrument/feed or invalid/suspect event must never
         alter this series' state, regardless of what the caller believes it is routing."""
@@ -172,8 +113,13 @@ class TradeBarBuilder:
                 f"event for ({event.instrument_id!r}, {event.feed!r}) cannot be applied to builder "
                 f"for ({self.instrument_id!r}, {self.feed!r})"
             )
-        if self._source_identity is not None and self._source_identity != (event.provider, event.session_version):
-            raise MismatchedSeriesError("provider/session identity changed within the builder")
+        if self._source_identity is not None and self._source_identity != (
+            event.provider,
+            event.session_version,
+        ):
+            raise MismatchedSeriesError(
+                "provider/session identity changed within the builder"
+            )
         if event.quality_state != QualityState.OK:
             raise RejectedQualityError(
                 f"event {event.event_id!r} has quality_state {event.quality_state.value!r}; only "
@@ -185,22 +131,44 @@ class TradeBarBuilder:
         self._check_publication_time(event.available_at_ns)
         bucket_start = self.bucket_start_ns(event.event_time_ns)
         if bucket_start in self._evicted:
-            raise EvictedBucketError(f"bucket {bucket_start} was evicted under the retention policy")
+            raise EvictedBucketError(
+                f"bucket {bucket_start} was evicted under the retention policy"
+            )
         eligibility = self._rules.classify(
-            TradeClassificationContext(conditions=event.conditions, tape=event.tape, interval=self.interval)
+            TradeClassificationContext(
+                conditions=event.conditions, tape=event.tape, interval=self.interval
+            )
         )
-        payload = (event.provider, event.feed, event.instrument_id, event.event_time_ns,
-                   event.price, event.size, event.venue, event.conditions, event.tape, event.session_version)
+        payload = (
+            event.provider,
+            event.feed,
+            event.instrument_id,
+            event.event_time_ns,
+            event.price,
+            event.size,
+            event.venue,
+            event.conditions,
+            event.tape,
+            event.session_version,
+        )
         previous_payload = self._trade_payloads.get(event.trade_id)
         if previous_payload is not None and previous_payload != payload:
-            raise ConflictingTradeError("trade identity redelivered with different market payload")
+            raise ConflictingTradeError(
+                "trade identity redelivered with different market payload"
+            )
         is_new_bucket = bucket_start not in self._buckets
         contributors = self._buckets.get(bucket_start, {})
         existing = contributors.get(event.trade_id)
         if existing is not None:
-            if (existing.active and existing.price == event.price and existing.size == event.size
-                    and existing.eligibility == eligibility):
-                return self._snapshot(bucket_start, event.available_at_ns)  # idempotent redelivery (BAR-005)
+            if (
+                existing.active
+                and existing.price == event.price
+                and existing.size == event.size
+                and existing.eligibility == eligibility
+            ):
+                return self._snapshot(
+                    bucket_start, event.available_at_ns
+                )  # idempotent redelivery (BAR-005)
             raise ConflictingTradeError(
                 f"trade_id {event.trade_id!r} redelivered with a different payload; use a correction"
             )
@@ -217,7 +185,11 @@ class TradeBarBuilder:
         self._trade_payloads[event.trade_id] = payload
         self._source_identity = (event.provider, event.session_version)
         contributors[event.trade_id] = _Contributor(
-            event.trade_id, event.event_time_ns, event.price, event.size, eligibility,
+            event.trade_id,
+            event.event_time_ns,
+            event.price,
+            event.size,
+            eligibility,
         )
         self._trade_id_bucket[event.trade_id] = bucket_start
         for effective_ns, _, reason in self._actions.values():
@@ -245,30 +217,52 @@ class TradeBarBuilder:
         self._check_series_and_quality(event)
         self._check_publication_time(event.available_at_ns)
         bucket_start = self._find_bucket(event.original_trade_id)
-        payload = (event.original_trade_id, event.action, event.corrected_price, event.corrected_size,
-                   event.conditions, event.tape)
+        payload = (
+            event.original_trade_id,
+            event.action,
+            event.corrected_price,
+            event.corrected_size,
+            event.conditions,
+            event.tape,
+        )
         previously_applied = self._applied_corrections.get(event.event_id)
         if previously_applied is not None:
             if previously_applied != payload:
                 raise ConflictingTradeError(
                     f"correction event_id {event.event_id!r} redelivered with a different payload"
                 )
-            return self._snapshot(bucket_start, event.available_at_ns)  # idempotent redelivery (R3I-11)
+            return self._snapshot(
+                bucket_start, event.available_at_ns
+            )  # idempotent redelivery (R3I-11)
         contributor = self._buckets[bucket_start][event.original_trade_id]
         # IR-01: compute every candidate value BEFORE mutating anything, so a classification
         # error (e.g. an unknown condition) leaves the contributor completely untouched --
         # never a partially-applied price/size with a stale eligibility, or vice versa.
         if event.action == "cancel":
-            new_active, new_price, new_size, new_eligibility = False, contributor.price, contributor.size, contributor.eligibility
+            new_active, new_price, new_size, new_eligibility = (
+                False,
+                contributor.price,
+                contributor.size,
+                contributor.eligibility,
+            )
         else:
             new_eligibility = (
                 self._rules.classify(
-                    TradeClassificationContext(conditions=event.conditions, tape=event.tape, interval=self.interval)
+                    TradeClassificationContext(
+                        conditions=event.conditions,
+                        tape=event.tape,
+                        interval=self.interval,
+                    )
                 )
-                if event.conditions is not None  # None = conditions unchanged by this correction
+                if event.conditions
+                is not None  # None = conditions unchanged by this correction
                 else contributor.eligibility
             )
-            new_active, new_price, new_size = True, event.corrected_price, event.corrected_size
+            new_active, new_price, new_size = (
+                True,
+                event.corrected_price,
+                event.corrected_size,
+            )
         contributor.active = new_active
         contributor.price = new_price
         contributor.size = new_size
@@ -293,7 +287,11 @@ class TradeBarBuilder:
         self._watermark_ns = max(self._watermark_ns, now_ns)
 
     def invalidate_if_straddled(
-        self, effective_ns: int, *, reason: str, available_at_ns: int | None = None,
+        self,
+        effective_ns: int,
+        *,
+        reason: str,
+        available_at_ns: int | None = None,
         action_id: str | None = None,
     ) -> BarSnapshot | None:
         available_at_ns = effective_ns if available_at_ns is None else available_at_ns
@@ -305,8 +303,13 @@ class TradeBarBuilder:
                 raise ValueError("conflicting corporate action identity")
             return None
         bucket_start = self.bucket_start_ns(effective_ns)
-        if bucket_start in self._evicted and bucket_start < effective_ns < bucket_start + self._duration_ns:
-            raise EvictedBucketError("cannot resolve action against evicted contributors")
+        if (
+            bucket_start in self._evicted
+            and bucket_start < effective_ns < bucket_start + self._duration_ns
+        ):
+            raise EvictedBucketError(
+                "cannot resolve action against evicted contributors"
+            )
         self._actions[action_id] = payload
         if not bucket_start < effective_ns < bucket_start + self._duration_ns:
             return None
@@ -316,21 +319,30 @@ class TradeBarBuilder:
         if bucket_start not in self._closed:
             self._closed.add(bucket_start)
             self._closed_order.append(bucket_start)
-        snapshot = self._snapshot(bucket_start, available_at_ns).model_copy(update={"publication_phase": 25})
+        snapshot = self._snapshot(bucket_start, available_at_ns).model_copy(
+            update={"publication_phase": 25}
+        )
         snapshot = self._publish_version(bucket_start, snapshot)
         self._enforce_retention()
         return snapshot
 
-    def advance_clock(self, now_ns: int, *, publication_phase: int = 20) -> list[BarSnapshot]:
+    def advance_clock(
+        self, now_ns: int, *, publication_phase: int = 20
+    ) -> list[BarSnapshot]:
         """Close elapsed buckets using the publication clock, never a delayed boundary time."""
         self._check_publication_time(now_ns, publication_phase)
         self.observe_clock(now_ns)
         newly_closed = []
         for bucket_start in sorted(self._buckets):
-            if bucket_start + self._duration_ns <= self._watermark_ns and bucket_start not in self._closed:
+            if (
+                bucket_start + self._duration_ns <= self._watermark_ns
+                and bucket_start not in self._closed
+            ):
                 self._closed.add(bucket_start)
                 self._closed_order.append(bucket_start)
-                snapshot = self._snapshot(bucket_start, now_ns).model_copy(update={"publication_phase": publication_phase})
+                snapshot = self._snapshot(bucket_start, now_ns).model_copy(
+                    update={"publication_phase": publication_phase}
+                )
                 snapshot = self._publish_version(bucket_start, snapshot)
                 newly_closed.append(snapshot)
                 self._enforce_retention()
@@ -361,22 +373,38 @@ class TradeBarBuilder:
     def _find_bucket(self, trade_id: str) -> int:
         bucket_start = self._trade_id_bucket.get(trade_id)
         if bucket_start is None:
-            raise UnresolvedCorrectionError(f"no accepted trade with trade_id {trade_id!r}")
+            raise UnresolvedCorrectionError(
+                f"no accepted trade with trade_id {trade_id!r}"
+            )
         if bucket_start in self._evicted:
-            raise EvictedBucketError(f"original trade {trade_id!r}'s bucket was evicted")
+            raise EvictedBucketError(
+                f"original trade {trade_id!r}'s bucket was evicted"
+            )
         return bucket_start
 
     def _register_post_close_update(self, bucket_start: int) -> None:
         if bucket_start in self._closed:
-            self._post_close_revisions[bucket_start] = self._post_close_revisions.get(bucket_start, 0) + 1
+            self._post_close_revisions[bucket_start] = (
+                self._post_close_revisions.get(bucket_start, 0) + 1
+            )
 
     def _publish_version(self, bucket_start: int, snapshot: BarSnapshot) -> BarSnapshot:
-        self._check_publication_time(snapshot.available_at_ns, snapshot.publication_phase)
+        self._check_publication_time(
+            snapshot.available_at_ns, snapshot.publication_phase
+        )
         self._last_publication_ns = snapshot.available_at_ns
         if self._version_store is None:
             return snapshot
-        source_event_ids = tuple(sorted(c.trade_id for c in self._buckets.get(bucket_start, {}).values() if c.active))
-        version = self._version_store.publish(snapshot, source_event_ids=source_event_ids)
+        source_event_ids = tuple(
+            sorted(
+                c.trade_id
+                for c in self._buckets.get(bucket_start, {}).values()
+                if c.active
+            )
+        )
+        version = self._version_store.publish(
+            snapshot, source_event_ids=source_event_ids
+        )
         return snapshot.model_copy(update={"publication_sequence": version.sequence})
 
     def _enforce_retention(self) -> None:
@@ -388,14 +416,22 @@ class TradeBarBuilder:
             self._evicted.add(oldest)
 
     def _snapshot(self, bucket_start: int, available_at_ns: int) -> BarSnapshot:
-        contributors = [c for c in self._buckets.get(bucket_start, {}).values() if c.active]
+        contributors = [
+            c for c in self._buckets.get(bucket_start, {}).values() if c.active
+        ]
         is_closed = bucket_start in self._closed
         revision = self._post_close_revisions.get(bucket_start, 0) if is_closed else 0
         if bucket_start in self._invalidated_buckets:
             status = SnapshotStatus.INVALIDATED
         else:
-            status = SnapshotStatus.FORMING if not is_closed else (
-                SnapshotStatus.REVISED if revision > 0 else SnapshotStatus.CLOSED_AS_OF
+            status = (
+                SnapshotStatus.FORMING
+                if not is_closed
+                else (
+                    SnapshotStatus.REVISED
+                    if revision > 0
+                    else SnapshotStatus.CLOSED_AS_OF
+                )
             )
 
         # C09/C10: a declared total order -- (event_time_ns, trade_id) -- so ties never depend
@@ -415,20 +451,35 @@ class TradeBarBuilder:
         high = max((c.price for c in high_contributors), default=None)
         low = min((c.price for c in low_contributors), default=None)
 
-        volume = sum((c.size for c in contributors if c.eligibility.volume), start=Decimal(0))
+        volume = sum(
+            (c.size for c in contributors if c.eligibility.volume), start=Decimal(0)
+        )
         trade_count = sum(1 for c in contributors if c.eligibility.count)
 
         vwap_contributors = [c for c in contributors if c.eligibility.vwap]
-        vwap_numerator = sum((c.price * c.size for c in vwap_contributors), start=Decimal(0))
+        vwap_numerator = sum(
+            (c.price * c.size for c in vwap_contributors), start=Decimal(0)
+        )
         vwap_denominator = sum((c.size for c in vwap_contributors), start=Decimal(0))
 
-
         return BarSnapshot(
-            instrument_id=self.instrument_id, feed=self.feed, interval=self.interval,
-            bar_start_ns=bucket_start, bar_end_ns=bucket_start + self._duration_ns,
-            available_at_ns=available_at_ns, status=status, revision=revision,
-            open=open_, high=high, low=low, close=close, volume=volume, trade_count=trade_count,
-            vwap_numerator=vwap_numerator, vwap_denominator=vwap_denominator, rule_set_id=self._rules.rule_set_id,
+            instrument_id=self.instrument_id,
+            feed=self.feed,
+            interval=self.interval,
+            bar_start_ns=bucket_start,
+            bar_end_ns=bucket_start + self._duration_ns,
+            available_at_ns=available_at_ns,
+            status=status,
+            revision=revision,
+            open=open_,
+            high=high,
+            low=low,
+            close=close,
+            volume=volume,
+            trade_count=trade_count,
+            vwap_numerator=vwap_numerator,
+            vwap_denominator=vwap_denominator,
+            rule_set_id=self._rules.rule_set_id,
             provider=self._source_identity[0] if self._source_identity else None,
             session_version=self._source_identity[1] if self._source_identity else None,
         )

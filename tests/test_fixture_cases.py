@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from rsys.fixture_engine import run_case
+from rsys.execution.fixtures import run_case
 
 CASES_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "cases.json"
 _CASES = {c["id"]: c for c in json.loads(CASES_PATH.read_text())["cases"]}

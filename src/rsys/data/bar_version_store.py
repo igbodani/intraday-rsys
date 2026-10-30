@@ -14,68 +14,11 @@ every time the builder accepts a change. A historical `as_of` query walks the
 already-published versions and returns the last one whose publication became
 visible at or before the cutoff -- it never recomputes from current state.
 """
+
 from __future__ import annotations
 
-from decimal import Decimal
-
-from pydantic import BaseModel, ConfigDict
-
-from rsys.data.bar_builder import BarSnapshot
-from rsys.data.keys import ReplayKey, cutoff_key
-
-
-class BarVersion(BaseModel):
-    """One immutable, published state of a bucket. `publication_key` orders versions for the
-    same bucket identity; `sequence` breaks ties between versions published at the same
-    `available_at_ns` (e.g. a trade and a same-instant correction), preserving publication
-    order without claiming any particular wall-clock meaning for the tie-break itself."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    instrument_id: str
-    feed: str
-    interval: str
-    bar_start_ns: int
-    bar_end_ns: int
-    available_at_ns: int
-    publication_phase: int = 37
-    sequence: int
-    status: str
-    revision: int
-    open: Decimal | None
-    high: Decimal | None
-    low: Decimal | None
-    close: Decimal | None
-    volume: Decimal
-    trade_count: int
-    vwap_numerator: Decimal
-    vwap_denominator: Decimal
-    rule_set_id: str
-    source_event_ids: tuple[str, ...]
-    adjustment_mode: str = "raw"
-    provider: str | None = None
-    session_version: str | None = None
-
-    @property
-    def publication_key(self) -> ReplayKey:
-        return ReplayKey(self.available_at_ns, self.publication_phase, self.sequence)
-
-    @classmethod
-    def from_snapshot(cls, snapshot: BarSnapshot, *, sequence: int, source_event_ids: tuple[str, ...]) -> BarVersion:
-        return cls(
-            instrument_id=snapshot.instrument_id, feed=snapshot.feed, interval=snapshot.interval,
-            bar_start_ns=snapshot.bar_start_ns, bar_end_ns=snapshot.bar_end_ns,
-            available_at_ns=snapshot.available_at_ns, sequence=sequence, status=snapshot.status.value,
-            revision=snapshot.revision, open=snapshot.open, high=snapshot.high, low=snapshot.low,
-            close=snapshot.close, volume=snapshot.volume, trade_count=snapshot.trade_count,
-            vwap_numerator=snapshot.vwap_numerator, vwap_denominator=snapshot.vwap_denominator,
-            rule_set_id=snapshot.rule_set_id, source_event_ids=source_event_ids,
-            adjustment_mode=snapshot.adjustment_mode, publication_phase=snapshot.publication_phase,
-            provider=snapshot.provider, session_version=snapshot.session_version,
-        )
-
-
-BucketIdentity = tuple[str, str, str, int]  # (instrument_id, feed, interval, bar_start_ns)
+from rsys.data.keys import cutoff_key
+from rsys.data.models import BarSnapshot, BarVersion, BucketIdentity, ReplayKey
 
 
 class BarVersionStore:
@@ -92,9 +35,18 @@ class BarVersionStore:
         if self._last_key is not None and candidate < self._last_key:
             raise ValueError("cannot backdate a bar publication")
 
-    def publish(self, snapshot: BarSnapshot, *, source_event_ids: tuple[str, ...]) -> BarVersion:
-        identity: BucketIdentity = (snapshot.instrument_id, snapshot.feed, snapshot.interval, snapshot.bar_start_ns)
-        version = BarVersion.from_snapshot(snapshot, sequence=self._next_sequence, source_event_ids=source_event_ids)
+    def publish(
+        self, snapshot: BarSnapshot, *, source_event_ids: tuple[str, ...]
+    ) -> BarVersion:
+        identity: BucketIdentity = (
+            snapshot.instrument_id,
+            snapshot.feed,
+            snapshot.interval,
+            snapshot.bar_start_ns,
+        )
+        version = BarVersion.from_snapshot(
+            snapshot, sequence=self._next_sequence, source_event_ids=source_event_ids
+        )
         if self._last_key is not None and version.publication_key < self._last_key:
             raise ValueError("cannot backdate a bar publication")
         self._last_key = version.publication_key
@@ -102,7 +54,9 @@ class BarVersionStore:
         self._versions.setdefault(identity, []).append(version)
         return version
 
-    def as_of(self, identity: BucketIdentity, cutoff_ns: int | ReplayKey) -> BarVersion | None:
+    def as_of(
+        self, identity: BucketIdentity, cutoff_ns: int | ReplayKey
+    ) -> BarVersion | None:
         """The last published version visible at or before `cutoff_ns`, or `None` if no
         version had been published by then (a typed "unavailable" result -- never a
         fabricated empty bar standing in for missing history)."""

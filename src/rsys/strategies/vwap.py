@@ -11,15 +11,13 @@ scanner scores are declared fixture inputs. Real historical scanner features rem
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum
 
-from rsys.money import ceil_step, floor_step
-from rsys.orders import Proposal
+from rsys.account.models import Proposal
+from rsys.account.money import ceil_step, floor_step
+from rsys.strategies.models import TICK, CompletedBar, VwapConfig, VwapState
 
 STRATEGY_ID = "vwap_touch_hold_v1"
-TICK = Decimal("0.01")
 
 
 def _floor_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
@@ -28,40 +26,6 @@ def _floor_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
 
 def _ceil_tick(value: Decimal, tick: Decimal = TICK) -> Decimal:
     return ceil_step(value, tick)
-
-
-class VwapState(str, Enum):
-    WARMUP = "WARMUP"
-    IDLE = "IDLE"
-    ARMED = "ARMED"
-    PULLBACK = "PULLBACK"
-    PROPOSED = "PROPOSED"
-    IN_POSITION = "IN_POSITION"
-    DONE = "DONE"
-    EXPIRED = "EXPIRED"
-
-
-@dataclass(frozen=True)
-class CompletedBar:
-    bar_start_ms: int
-    available_at_ms: int
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: Decimal
-
-
-@dataclass
-class VwapConfig:
-    warmup_bars: int = 20
-    slope_lookback_bars: int = 5
-    pullback_max_bars: int = 5
-    confirmation_buffer_ticks: int = 1
-    base_interval_minutes: int = 1
-    entry_deadline_ms: int | None = None
-    target_r: Decimal = Decimal(2)
-    tick: Decimal = TICK
 
 
 class VwapStrategy:

@@ -14,23 +14,16 @@ from test_session_coordinator import (
 )
 from test_trade_input_run import _bar_to_trades, _build_runner, _ms
 
-from rsys.calendar import session_open_utc
-from rsys.features import HistorySession
-from rsys.multi_session_evaluation import (
-    compute_exposure,
-    compute_multi_session_metrics,
-)
-from rsys.portfolio import Portfolio
-from rsys.scanner_history import (
-    FixtureHistoryProvider,
-    SyntheticSymbolHistory,
-    build_scanner_inputs,
-    candidate_input,
-)
-from rsys.session_coordinator import SessionResult
-from rsys.standalone_run import ExecutionPolicy, FillRecord, IncompleteSessionError
+from rsys.account.portfolio import Portfolio
+from rsys.application.models import SessionResult
+from rsys.data.calendar import session_open_utc
+from rsys.data.history import FixtureHistoryProvider
+from rsys.data.models import HistorySession, SyntheticSymbolHistory
+from rsys.execution.errors import IncompleteSessionError
+from rsys.execution.models import ExecutionPolicy, FillRecord, Trade
+from rsys.research.multi_session import compute_exposure, compute_multi_session_metrics
+from rsys.strategies.history import build_scanner_inputs, candidate_input
 from rsys.strategies.orb import OrbStrategy
-from rsys.trade_execution import Trade
 
 
 def test_three_sessions_reconcile_exits_cash_and_fees_at_identical_entry_times():

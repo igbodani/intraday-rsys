@@ -2,15 +2,15 @@
 such -- none of this proves Alpaca parity; it proves the comparator's own behavior."""
 from decimal import Decimal
 
-from rsys.data.bar_version_store import BarVersion
-from rsys.data.events import (
+from rsys.data.models import (
+    BarVersion,
     EventTimeMeaning,
     ProviderBarEvent,
     QualityState,
     TimingLabel,
 )
+from rsys.data.parity import compare_bar_version_to_provider_bar
 from rsys.data.timestamps import parse_utc_timestamp_ns
-from rsys.parity import compare_bar_version_to_provider_bar
 
 _COMMON = {
     "provider": "alpaca",

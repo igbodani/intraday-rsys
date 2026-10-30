@@ -8,17 +8,21 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
-from rsys.calendar import session_duration_minutes, session_open_local, session_open_utc
-from rsys.multi_session_evaluation import (
+from rsys.application.models import SessionResult
+from rsys.data.calendar import (
+    session_duration_minutes,
+    session_open_local,
+    session_open_utc,
+)
+from rsys.execution.models import FillRecord
+from rsys.research.models import SessionEquityPoint
+from rsys.research.multi_session import (
     UNAVAILABLE_NO_SESSIONS,
     UNAVAILABLE_NONPOSITIVE_PEAK,
-    SessionEquityPoint,
     compute_drawdown,
     compute_exposure,
     compute_multi_session_metrics,
 )
-from rsys.session_coordinator import SessionResult
-from rsys.standalone_run import FillRecord
 
 REGULAR_DATE = date(2024, 12, 2)
 EARLY_CLOSE_DATE = date(2024, 11, 29)

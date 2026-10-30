@@ -6,12 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rsys.report import (
-    ReportError,
-    load_attempt,
-    render_report,
-    render_report_for_attempt,
-)
+from rsys.reporting.errors import ReportError
+from rsys.reporting.html import load_attempt, render_report, render_report_for_attempt
 
 _MANIFEST = {
     "run_id": "r-1", "starting_equity": "1000", "ending_equity": "1020",

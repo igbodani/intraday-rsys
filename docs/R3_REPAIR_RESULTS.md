@@ -1,5 +1,7 @@
 # R3 repair results
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 Date: 2026-10-29 UTC. Scope: the supplied `intraday-rsys(3).zip` snapshot, whose embedded Git HEAD is `7084d4a` and whose newer working files had 381 passing tests. The starting point is the uploaded working tree, not that older commit. Existing prior repairs were preserved. The repair pass performed no M2 implementation, market-data request or broker action. GitHub publication is a separate follow-up requested by the owner.
 
 ## Outcome

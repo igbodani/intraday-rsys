@@ -1,5 +1,7 @@
 # M2 implementation handoff for Copilot
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 **Current-state update (2026-10-29):** this document remains the detailed target specification. Its starting-state descriptions predate the standalone M2 implementation and subsequent repairs. Read [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md), [M2_IMPLEMENTATION_STATUS.md](M2_IMPLEMENTATION_STATUS.md) and [M2_REPAIR_RESULTS.md](M2_REPAIR_RESULTS.md) before assigning the next ticket; do not rebuild repaired components or claim the full handoff complete.
 
 Date: 2026-10-29. Project: `igbodani/intraday-rsys`.

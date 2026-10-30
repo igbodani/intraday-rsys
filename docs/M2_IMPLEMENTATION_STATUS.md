@@ -1,10 +1,10 @@
 # M2 implementation status
 
-Updated 2026-10-29 after priorities 1–2 on `fix/r3-replay-causality`, based on repaired revision `4e68583`. Use the containing commit as the implemented source revision.
+Updated 2026-10-30 after package/model reorganization and priorities 1–2 on `fix/r3-replay-causality`, based on repaired revision `4e68583`. Use the containing commit as the implemented source revision.
 
 Synthetic ORB/VWAP bar and trade sessions use ReplayRunner, bounded strategy views, shared account transitions, sizing and timers. Public `rsys run` now accepts explicit version-2 bar/trade multi-session configuration, preserving account equity and risk while resetting daily strategies. Inputs, resolved defaults, fills, failures, metrics and reports are retained. See [PUBLIC_SESSION_RUNS.md](PUBLIC_SESSION_RUNS.md) for the exact schema and policy semantics.
 
-The 678-test develop snapshot contained eight reproduced defects. [DEVELOP_REPAIR_RESULTS.md](DEVELOP_REPAIR_RESULTS.md) documents those repairs and 24 regressions. This extension adds 46 public-session/policy cases: **748 tests pass**, Ruff is clean, and the existing public paths plus both new examples are verified for expected exits and repeatability.
+The 678-test develop snapshot contained eight reproduced defects. [DEVELOP_REPAIR_RESULTS.md](DEVELOP_REPAIR_RESULTS.md) documents those repairs and 24 regressions. Priorities 1–2 added 46 public-session/policy cases; the package reorganization adds 15 import, ownership and compatibility checks: **763 tests pass**, Ruff is clean, and the existing public paths plus both new examples are verified for expected exits and repeatability.
 
 | Area | Current state | Remaining gate |
 |---|---|---|

@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from rsys.holdout import (
+from rsys.research.errors import HoldoutAccessDenied
+from rsys.research.holdout import (
     FINAL_EVALUATE_EXIT_CODE,
-    HoldoutAccessDenied,
     HoldoutGuard,
-    PartitionManifest,
     compute_file_hash,
     final_evaluate,
     verify_partition_integrity,
 )
+from rsys.research.models import PartitionManifest
 
 
 @pytest.fixture

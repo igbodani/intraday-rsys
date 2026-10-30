@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.portfolio import AcceptanceError
-from rsys.sizing import size_quantity
+from rsys.account.errors import AcceptanceError
+from rsys.account.sizing import size_quantity
 
 
 def test_f13_risk_budget_includes_fixed_fees():

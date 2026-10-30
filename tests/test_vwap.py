@@ -6,7 +6,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from rsys.strategies.vwap import CompletedBar, VwapConfig, VwapState, VwapStrategy
+from rsys.strategies.models import CompletedBar, VwapConfig, VwapState
+from rsys.strategies.vwap import VwapStrategy
 
 CASES_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "strategy_cases.json"
 _CASES = {c["id"]: c for c in json.loads(CASES_PATH.read_text())["cases"] if c["strategy"] == "vwap_touch_hold_v1"}

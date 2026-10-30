@@ -2,15 +2,18 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.data.events import EventTimeMeaning, QualityState, QuoteEvent, TimingLabel
-from rsys.data.quotes import (
+from rsys.data.errors import MismatchedQuoteSeriesError
+from rsys.data.models import (
+    EventTimeMeaning,
     FreshnessState,
-    MismatchedQuoteSeriesError,
+    QualityState,
     QuoteCondition,
+    QuoteEvent,
     QuoteFreshnessPolicy,
-    QuoteState,
+    TimingLabel,
     classify_quote_condition,
 )
+from rsys.data.quotes import QuoteState
 from rsys.data.timestamps import parse_utc_timestamp_ns
 
 _COMMON = {

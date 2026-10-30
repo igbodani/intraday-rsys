@@ -1,5 +1,7 @@
 # Develop review repairs
 
+> Historical planning or implementation record. Starting-state descriptions and paths reflect its original revision. Use [ARCHITECTURE.md](ARCHITECTURE.md) for current packages and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](CURRENT_SYSTEM_AND_NEXT_STEPS.md) for current status. Behavioral requirements still apply unless superseded by the decision register.
+
 Date: 2026-10-29 (America/Denver). Baseline: `bab9082a985f019d4ebe4ad450c5c3dbe86f40e9`, tree `e5da5f0342476be3cbec760677f58ecb92ce50d9`. Target: `fix/r3-replay-causality`; the containing commit identifies the repaired source. No market data or broker operations were used.
 
 ## Failures and fixes

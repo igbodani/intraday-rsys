@@ -11,13 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from rsys.batch_config import validate_batch
-from rsys.batch_run import SessionBatch
-from rsys.compare_cli import CompareCliError, compare_run_pair
-from rsys.evaluation import ComparisonError
-from rsys.risk_policy import ExecutionCosts, RiskMonitor, RiskPolicy
-from rsys.session_config import RunConfigError
-from rsys.storage import RunStorage
+from rsys.account.models import RiskPolicy
+from rsys.account.risk import RiskMonitor
+from rsys.application.batch import SessionBatch
+from rsys.application.batch_config import validate_batch
+from rsys.application.errors import RunConfigError
+from rsys.execution.models import ExecutionCosts
+from rsys.research.comparison import compare_run_pair
+from rsys.research.errors import CompareCliError, ComparisonError
+from rsys.research.storage import RunStorage
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -419,8 +421,8 @@ def test_vwap_composes_through_both_public_input_modes(mode):
 
 
 def test_handled_interruption_keeps_manifest_record_and_report_consistent(tmp_path, monkeypatch):
-    from rsys.run_cli import run_cli_entry
-    from rsys.trade_input_run import TradeInputRunner
+    from rsys.application.run import run_cli_entry
+    from rsys.execution.trade import TradeInputRunner
 
     def interrupt(*args, **kwargs):
         raise KeyboardInterrupt
@@ -455,8 +457,8 @@ def test_session_clock_cannot_rewind_after_an_oversized_timer():
 
 @pytest.mark.parametrize("error_type,status", [(RuntimeError, "failed"), (KeyboardInterrupt, "interrupted")])
 def test_construction_failure_retains_input_and_rethrows(tmp_path, monkeypatch, error_type, status):
-    from rsys import batch_run
-    from rsys.run_cli import run_cli_entry
+    from rsys.application import batch as batch_run
+    from rsys.application.run import run_cli_entry
 
     def fail_construction(*args, **kwargs):
         raise error_type("construction stopped")

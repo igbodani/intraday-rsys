@@ -1,6 +1,6 @@
 """CLI subprocess tests for `rsys run` (docs/M2_IMPLEMENTATION_HANDOFF.md step 9, run subset).
 
-Honesty note: `rsys run` drives only the synthetic `StandaloneRunner`, not the real
+Honesty note: `rsys run` drives only the synthetic `BarSessionRunner`, not the real
 `ReplayRunner`/market data -- see docs/M2_IMPLEMENTATION_STATUS.md.
 """
 from __future__ import annotations

@@ -9,16 +9,13 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from rsys.features import HistorySession
-from rsys.scanner import NOT_ELIGIBLE, rank_candidates
-from rsys.scanner_history import (
-    FixtureHistoryProvider,
-    SyntheticSymbolHistory,
-    build_scanner_inputs,
-    candidate_input,
-)
-from rsys.standalone_run import SizingPolicy, StandaloneRunner
+from rsys.account.models import SizingPolicy
+from rsys.data.history import FixtureHistoryProvider
+from rsys.data.models import HistorySession, SyntheticSymbolHistory
+from rsys.execution.bar import BarSessionRunner
+from rsys.strategies.history import build_scanner_inputs, candidate_input
 from rsys.strategies.orb import OrbStrategy
+from rsys.strategies.scanner import NOT_ELIGIBLE, rank_candidates
 
 DECISION_DATE = date(2024, 11, 29)
 
@@ -135,14 +132,14 @@ def test_build_scanner_inputs_is_causal_a_later_bar_never_changes_an_earlier_dec
 
 
 def test_historical_scanner_mode_composes_through_a_real_standalone_session():
-    """The historical mode's output plugs into `StandaloneRunner.run_session` exactly like
+    """The historical mode's output plugs into `BarSessionRunner.run_session` exactly like
     the supplied-score fixture mode: AAA (sufficient dollar volume) is accepted, BBB (same
     breakout, insufficient dollar volume) is excluded -- without changing the runner."""
     import json
     from pathlib import Path
 
-    from rsys.standalone_run import ExecutionPolicy
-    from rsys.strategies.orb import CompletedBar
+    from rsys.execution.models import ExecutionPolicy
+    from rsys.strategies.models import CompletedBar
 
     cases_path = Path(__file__).resolve().parents[1] / "fixtures" / "strategy_cases.json"
     s01 = next(c for c in json.loads(cases_path.read_text())["cases"] if c["id"] == "S01")
@@ -185,11 +182,11 @@ def test_historical_scanner_mode_composes_through_a_real_standalone_session():
     )
 
     strategies = {"AAA": OrbStrategy("AAA", _ms("09:30:00")), "BBB": OrbStrategy("BBB", _ms("09:30:00"))}
-    from rsys.portfolio import Portfolio
+    from rsys.account.portfolio import Portfolio
 
     cash = Decimal(10000)
     portfolio = Portfolio(total_cash=cash, spendable_cash=cash, unsettled_cash=Decimal(0))
-    runner = StandaloneRunner(
+    runner = BarSessionRunner(
         strategies, portfolio, SizingPolicy(max_quantity=Decimal(10)), execution=ExecutionPolicy()
     )
     runner.run_session(bars_by_symbol, scanner_inputs)

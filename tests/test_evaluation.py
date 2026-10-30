@@ -7,15 +7,15 @@ from decimal import Decimal
 
 import pytest
 
-from rsys.evaluation import (
+from rsys.research.errors import ComparisonError
+from rsys.research.evaluation import (
     NOT_DEFINED_NO_LOSSES,
     UNAVAILABLE_NO_TRADES,
-    ComparisonError,
-    RunAssumptions,
     compare_runs,
     compute_metrics,
     reconstruct_completed_trades,
 )
+from rsys.research.models import RunAssumptions
 
 
 @dataclass

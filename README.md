@@ -2,6 +2,8 @@
 
 Offline, synthetic-first implementation of the intraday research system governed by `AGENTS.md` and `docs/`. No market data acquisition, broker access or trading is implemented.
 
+Start with [the package and model map](docs/ARCHITECTURE.md) and [the documentation index](docs/README.md). Each functional package owns a `models.py`; runtime services live beside it.
+
 ## Current behavior
 
 - Configuration: isolated fixture, research and replay profiles; unresolved research decisions remain named blockers.
@@ -37,7 +39,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **748 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The verified suite contains **763 passing tests**. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 

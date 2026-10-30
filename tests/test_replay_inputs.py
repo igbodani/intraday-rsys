@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from rsys.data.bar_rules import FixtureBarRuleSet
-from rsys.data.events import (
+from rsys.data.models import (
     EventTimeMeaning,
     QualityState,
     TimerEvent,
@@ -16,8 +16,8 @@ from rsys.data.events import (
     TradeEvent,
 )
 from rsys.data.timestamps import parse_utc_timestamp_ns
-from rsys.replay import ReplayProfile
-from rsys.replay_runtime import ReplayRunner, SeriesRouter
+from rsys.replay.models import ReplayProfile
+from rsys.replay.runtime import ReplayRunner, SeriesRouter
 
 _COMMON = {
     "provider": "alpaca",
@@ -327,8 +327,8 @@ def test_saved_context_across_two_instruments_never_crosses_series_identity():
 # ---- IR-02 / R3I-02: the authoritative builder's completed history reaches closed_bars() ----
 
 def test_trade_authority_exposes_completed_bars_to_closed_context():
-    from rsys.replay import replay_order
-    from rsys.views import ClosedOnlyContext, ReplayView
+    from rsys.replay.clock import replay_order
+    from rsys.replay.views import ClosedOnlyContext, ReplayView
 
     router = SeriesRouter("fixture", "1Min", FixtureBarRuleSet())
     events = [
@@ -386,9 +386,9 @@ def test_first_late_trade_respects_elapsed_boundary():
 # ---- IR-06 / R3I-13: quote capability and quality are enforced at the view boundary ----
 
 def test_disabled_quote_capability_refuses_to_serve_raw_quotes():
-    from rsys.data.events import QuoteEvent
-    from rsys.replay import replay_order
-    from rsys.views import IntrabarContext, ReplayView
+    from rsys.data.models import QuoteEvent
+    from rsys.replay.clock import replay_order
+    from rsys.replay.views import IntrabarContext, ReplayView
 
     router = SeriesRouter("fixture", "1Min", FixtureBarRuleSet())
     quote_ns = parse_utc_timestamp_ns("2024-06-10T09:30:05Z")
@@ -413,8 +413,8 @@ def test_disabled_quote_capability_refuses_to_serve_raw_quotes():
 
 
 def test_invalid_quality_provider_bar_never_reaches_closed_bars():
-    from rsys.data.events import ProviderBarEvent
-    from rsys.views import ClosedOnlyContext, ReplayView
+    from rsys.data.models import ProviderBarEvent
+    from rsys.replay.views import ClosedOnlyContext, ReplayView
 
     bar_ns = parse_utc_timestamp_ns("2024-06-10T09:31:00Z")
     invalid_bar = ProviderBarEvent(
@@ -432,7 +432,7 @@ def test_invalid_quality_provider_bar_never_reaches_closed_bars():
 # ---- IR-03 / R3I-07: a split cannot silently produce a valid-looking mixed-unit bar ----
 
 def test_split_cannot_silently_create_a_mixed_unit_bar():
-    from rsys.data.events import CorporateActionEvent
+    from rsys.data.models import CorporateActionEvent
 
     router = SeriesRouter("fixture", "1Min", FixtureBarRuleSet())
     # A trade BEFORE the split, inside the 09:30-09:31 bucket.
@@ -458,7 +458,7 @@ def test_split_cannot_silently_create_a_mixed_unit_bar():
 
 
 def test_split_exactly_on_a_bucket_boundary_is_not_a_straddle():
-    from rsys.data.events import CorporateActionEvent
+    from rsys.data.models import CorporateActionEvent
 
     router = SeriesRouter("fixture", "1Min", FixtureBarRuleSet())
     router.apply_trade(_trade("T1", "2024-06-10T09:30:05Z", "2024-06-10T09:30:05Z", 100, 10))
