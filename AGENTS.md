@@ -10,7 +10,7 @@ Build the modular research system defined in this pack. Begin with offline fixtu
 - Do not invent a missing market assumption, risk limit, cost, date split, strategy rule or promotion threshold. Record the blocked dependency and ask the owner; continue unrelated work.
 - Routine implementation choices may be made and recorded when they do not change research semantics. The owner need not approve variable names or internal refactoring.
 - Implement interfaces with explicit settings before the owner chooses their research values. Synthetic fixtures use their own declared test values and must never be promoted to production defaults.
-- The task currently authorizes planning artifacts. Later build instructions authorize implementation; market data purchases and trading require their own applicable instructions.
+- The current user task defines the authorized planning, implementation and publication scope. Market data purchases and trading require their own applicable instructions.
 
 ## Research integrity
 
@@ -22,6 +22,8 @@ Build the modular research system defined in this pack. Begin with offline fixtu
 
 ## Engineering workflow
 
+- For Copilot roles, reusable skills, task briefs and evidence handoffs, use [docs/COPILOT_WORKFLOW.md](docs/COPILOT_WORKFLOW.md). These specialize this file; they do not override the decision register or authorize trading/merging.
+- Follow [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for package ownership. Plain records, enums and schemas belong in each owning package's `models.py`; services and active aggregates remain in behavior modules.
 - Implement the smallest behavior needed for the current ticket and its independent acceptance checks.
 - Use the proposed Python stack and validate compatibility before pinning exact versions. Keep Kronos/Nautilus/model extras out of the core installation.
 - Unit and fixture tests make no network calls. Mark provider integration checks separately and run them only when explicitly enabled with appropriate data access.

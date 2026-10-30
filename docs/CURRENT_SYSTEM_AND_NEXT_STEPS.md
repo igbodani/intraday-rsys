@@ -2,7 +2,7 @@
 
 Updated 2026-10-30 after the package/model reorganization. The authoritative package map is [ARCHITECTURE.md](ARCHITECTURE.md). Priorities 1–2 build on repaired revision `4e68583` on `fix/r3-replay-causality`. [PUBLIC_SESSION_RUNS.md](PUBLIC_SESSION_RUNS.md) describes the new public interface and policies. [DEVELOP_REPAIR_RESULTS.md](DEVELOP_REPAIR_RESULTS.md) and [M2_REPAIR_RESULTS.md](M2_REPAIR_RESULTS.md) retain the repair history. Use the containing commit as the exact implemented source revision.
 
-Public bar/trade multi-session execution and explicit equity-risk/cost policies are implemented and tested. The full suite has 763 passing tests, including 46 public-session/policy cases and 15 package-boundary/import checks. The remaining priorities are audited dated/as-of historical loading, complete account/feed semantics, and loader-level holdout protection. M2 is still partial overall; keep final evaluation blocked.
+Public bar/trade multi-session execution and explicit equity-risk/cost policies are implemented and tested. The engine suite has 763 passing tests, including 46 public-session/policy cases and 15 package-boundary/import checks. The [Copilot workflow](COPILOT_WORKFLOW.md) adds 11 configuration checks for a full suite of 774. The remaining priorities are audited dated/as-of historical loading, complete account/feed semantics, and loader-level holdout protection. M2 is still partial overall; keep final evaluation blocked.
 
 ## What the system is meant to do now
 
