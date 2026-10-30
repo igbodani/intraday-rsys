@@ -130,7 +130,7 @@ def run_fixture_cli(
                         json.dumps(row, sort_keys=True, default=_json_default) + "\n"
                         for row in trace_records
                     )
-                    trace_path.write_text(trace, encoding="utf-8")
+                    trace_path.write_bytes(trace.encode("utf-8"))
                     _write_json(
                         manifest_path,
                         {

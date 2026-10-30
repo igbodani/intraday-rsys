@@ -290,7 +290,7 @@ def run_cli_entry(
                     json.dumps(row, sort_keys=True, default=_json_default) + "\n"
                     for row in rows
                 )
-                trace_path.write_text(trace_text, encoding="utf-8")
+                trace_path.write_bytes(trace_text.encode("utf-8"))
                 manifest["semantic_trace_hash"] = hashlib.sha256(
                     trace_text.encode()
                 ).hexdigest()

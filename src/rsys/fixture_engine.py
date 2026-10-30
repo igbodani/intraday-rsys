@@ -17,9 +17,16 @@ from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
+from rsys.execution_contract import (
+    FillTransition,
+    RejectedEntry,
+    commit_entry,
+    commit_exit,
+    decide_bar_open_entry,
+    decide_bar_open_gap_exit,
+)
 from rsys.money import amount
 from rsys.orders import (
-    ENTRY_THROUGH_STOP,
     INVALID_STOP_DISTANCE,
     AcceptedIntent,
     Checkpoint,
@@ -228,17 +235,26 @@ class FixtureEngine:
             for symbol, raw in sorted(opens.items()):
                 price = _dec(raw)
                 self.last_mark[symbol] = price
+                reference_id = f"{scheduled.event_id}:{symbol}"
                 if scheduled.phase == 60 and symbol in self.portfolio.positions:
                     before = len(self.result.checkpoints)
                     self._check_open_exit(
-                        symbol, point, price, self.portfolio.positions[symbol]
+                        symbol,
+                        point,
+                        price,
+                        self.portfolio.positions[symbol],
+                        reference_id,
                     )
                     if len(self.result.checkpoints) == before:
                         self.portfolio.mark_position(symbol, price)
                         self._record_checkpoint(symbol, price, "mark")
                 elif scheduled.phase == 70 and symbol in self.pending_intents:
                     self._attempt_entry(
-                        symbol, point, price, self.pending_intents[symbol]
+                        symbol,
+                        point,
+                        price,
+                        self.pending_intents[symbol],
+                        reference_id,
                     )
         else:
             self._process_event(event)
@@ -421,30 +437,43 @@ class FixtureEngine:
             self.result.acceptance_order.append(symbol)
 
     def _check_open_exit(
-        self, symbol: str, time_ms: int, open_price: Decimal, position
+        self,
+        symbol: str,
+        time_ms: int,
+        open_price: Decimal,
+        position,
+        reference_id: str,
     ) -> None:
         pending_exit = self.pending_exits.get(symbol)
-        if pending_exit is not None and time_ms >= pending_exit.scheduled_time_ms:
-            exit_price = open_price - self.slippage
-            self._exit_position(
-                symbol, exit_price, time_ms, pending_exit.reason, mark=open_price
-            )
-            self.pending_exits.pop(symbol, None)
+        decision = decide_bar_open_gap_exit(
+            position, open_price, self.slippage, pending_exit is not None
+        )
+        if decision is None:
+            # No exit triggered: mark-only update, not checkpoint-worthy on its own.
             return
-        if position.stop is not None and open_price <= position.stop:
-            self._exit_position(
-                symbol, open_price - self.slippage, time_ms, "gap_stop", mark=open_price
-            )
-            return
-        if position.target is not None and open_price >= position.target:
-            self._exit_position(
-                symbol, position.target, time_ms, "gap_target", mark=open_price
-            )
-            return
-        # No exit triggered: mark-only update, not checkpoint-worthy on its own.
+        label = (
+            pending_exit.reason
+            if decision.kind == "pending"
+            else {"stop": "gap_stop", "target": "gap_target"}[decision.kind]
+        )
+        transition = self._make_exit_transition(
+            symbol, decision.price, time_ms, label, reference_id
+        )
+        self._exit_position(symbol, transition, mark=open_price)
+
+    def _exit_reservation_id(self, position) -> str:
+        # The exit's "intent identity" is the position itself (there is no separate
+        # reservation to release); a stable per-symbol key is sufficient here since
+        # `commit_exit` never consults `reservation_id` for a sell.
+        return f"position:{position.symbol}"
 
     def _attempt_entry(
-        self, symbol: str, time_ms: int, open_price: Decimal, intent: AcceptedIntent
+        self,
+        symbol: str,
+        time_ms: int,
+        open_price: Decimal,
+        intent: AcceptedIntent,
+        reference_id: str,
     ) -> None:
         proposal = intent.proposal
         if proposal.expires_at_ms is not None and time_ms >= proposal.expires_at_ms:
@@ -459,46 +488,45 @@ class FixtureEngine:
         if time_ms < proposal.ready_at_ms:
             self._record_checkpoint(symbol, open_price, "entry_skipped")
             return
-        modeled_entry = open_price + self.slippage
-        if proposal.stop is not None and modeled_entry <= proposal.stop:
+        risk_budget = self.sizing_cfg.get("per_proposal_risk_budget")
+        decision = decide_bar_open_entry(
+            proposal,
+            time_ms,
+            open_price,
+            self.slippage,
+            self.portfolio.available_cash + intent.reserved_cash,
+            entry_fee=self.entry_fee,
+            exit_fee=self.exit_fee,
+            risk_budget=_dec(risk_budget) if risk_budget is not None else None,
+            quantity_step=_dec(self.sizing_cfg.get("quantity_step", "1")),
+        )
+        if isinstance(decision, RejectedEntry):
             self.portfolio.release_reservation(
                 intent.reserved_cash, intent.reservation_id
             )
             del self.pending_intents[symbol]
-            self.result.rejection = ENTRY_THROUGH_STOP
+            self.result.rejection = decision.reason
             self.result.reserved_cash = Decimal(0)
             self._record_checkpoint(symbol, open_price, "entry_rejected")
             return
-        try:
-            quantity, _ = size_quantity(
-                entry=modeled_entry,
-                stop=proposal.stop,
-                entry_fee=self.entry_fee,
-                exit_fee=self.exit_fee,
-                risk_budget=_dec(self.sizing_cfg["per_proposal_risk_budget"])
-                if self.sizing_cfg.get("per_proposal_risk_budget") is not None
-                else None,
-                available_cash=self.portfolio.available_cash + intent.reserved_cash,
-                quantity_step=_dec(self.sizing_cfg.get("quantity_step", "1")),
-                max_quantity=proposal.quantity,
-            )
-        except AcceptanceError as exc:
-            self.portfolio.release_reservation(
-                intent.reserved_cash, intent.reservation_id
-            )
-            del self.pending_intents[symbol]
-            self.result.rejection = exc.reason
-            self._record_checkpoint(symbol, open_price, "entry_rejected")
-            return
-        self.portfolio.buy(
-            symbol,
-            quantity,
-            modeled_entry,
-            self.entry_fee,
-            intent.reserved_cash,
-            proposal.stop,
-            proposal.target,
-            reservation_id=intent.reservation_id,
+        modeled_entry, quantity = decision
+        transition = FillTransition(
+            instrument=symbol,
+            intent_identity=intent.reservation_id,
+            activation_key=f"{symbol}:{self.fills_count.get(symbol, 0) + 1}",
+            execution_reference_id=reference_id,
+            availability_key=time_ms,
+            quantity=quantity,
+            price=modeled_entry,
+            fee=self.entry_fee,
+            reason="entry",
+        )
+        commit_entry(
+            self.portfolio,
+            transition,
+            stop=proposal.stop,
+            target=proposal.target,
+            reserved_cash=intent.reserved_cash,
         )
         self.fills_count[symbol] = self.fills_count.get(symbol, 0) + 1
         if proposal.max_hold_ms is not None:
@@ -517,19 +545,32 @@ class FixtureEngine:
         self._record_checkpoint(symbol, open_price, "entry")
 
     def _exit_position(
-        self,
-        symbol: str,
-        exit_price: Decimal,
-        time_ms: int,
-        reason: str,
-        mark: Decimal | None = None,
+        self, symbol: str, transition: FillTransition, mark: Decimal | None = None
     ) -> None:
-        self.portfolio.sell(symbol, exit_price, self.exit_fee)
+        commit_exit(self.portfolio, transition)
         self.result.total_fees += self.exit_fee
-        self.result.exit_price = exit_price
+        self.result.exit_price = transition.price
         self.pending_exits.pop(symbol, None)
         self._record_checkpoint(
-            symbol, mark if mark is not None else exit_price, reason
+            symbol,
+            mark if mark is not None else transition.price,
+            transition.reason,
+        )
+
+    def _make_exit_transition(
+        self, symbol: str, price: Decimal, time_ms: int, reason: str, reference_id: str
+    ) -> FillTransition:
+        position = self.portfolio.positions[symbol]
+        return FillTransition(
+            instrument=symbol,
+            intent_identity=self._exit_reservation_id(position),
+            activation_key=f"{symbol}:{self.fills_count.get(symbol, 0)}",
+            execution_reference_id=reference_id,
+            availability_key=time_ms,
+            quantity=position.quantity,
+            price=price,
+            fee=self.exit_fee,
+            reason=reason,
         )
 
     def _on_bar_complete(self, event: dict[str, Any]) -> None:
@@ -545,18 +586,26 @@ class FixtureEngine:
         if stop_touched:
             self._exit_position(
                 symbol,
-                position.stop,
-                _time_ms(event["time_local"]),
-                "intrabar_stop",
+                self._make_exit_transition(
+                    symbol,
+                    position.stop,
+                    _time_ms(event["time_local"]),
+                    "intrabar_stop",
+                    f"bar_complete:{symbol}:{event.get('event_id', _time_ms(event['time_local']))}",
+                ),
                 mark=close,
             )
             return
         if target_touched:
             self._exit_position(
                 symbol,
-                position.target,
-                _time_ms(event["time_local"]),
-                "intrabar_target",
+                self._make_exit_transition(
+                    symbol,
+                    position.target,
+                    _time_ms(event["time_local"]),
+                    "intrabar_target",
+                    f"bar_complete:{symbol}:{event.get('event_id', _time_ms(event['time_local']))}",
+                ),
                 mark=close,
             )
             return

@@ -8,8 +8,11 @@ from rsys.scanner import (
     MISSING_GAIN,
     MISSING_RVOL,
     NOT_ELIGIBLE,
+    RANKING_JSON_VERSION,
     CandidateInput,
     rank_candidates,
+    ranking_digest,
+    ranking_evidence,
 )
 
 
@@ -62,3 +65,31 @@ def test_top_n_limits_output_without_dropping_the_full_ranking():
     result = rank_candidates(rows, top_n=2)
     assert result.top == ["A", "B"]
     assert result.ranked == ["A", "B", "C"]  # full ranking retained even when top is capped
+
+
+def test_ranking_evidence_pins_rank_symbol_rvol_and_gain():
+    result = rank_candidates([_row("A", rvol="3"), _row("B", rvol="1")], top_n=10)
+    evidence = ranking_evidence(result.ranked_candidates, feature_registry_version="v1")
+    assert evidence["encoding"] == RANKING_JSON_VERSION
+    assert evidence["feature_registry_version"] == "v1"
+    assert evidence["ranking"] == [
+        {"rank": 1, "symbol": "A", "rvol": "3", "gain": "0.03"},
+        {"rank": 2, "symbol": "B", "rvol": "1", "gain": "0.03"},
+    ]
+
+
+def test_ranking_digest_is_reconstructible_from_pinned_inputs():
+    result = rank_candidates([_row("A", rvol="3"), _row("B", rvol="1")], top_n=10)
+    digest = ranking_digest(result.ranked_candidates, feature_registry_version="v1")
+    reconstructed = rank_candidates(
+        [_row("B", rvol="1"), _row("A", rvol="3")], top_n=10  # reversed input order
+    )
+    assert ranking_digest(reconstructed.ranked_candidates, feature_registry_version="v1") == digest
+
+
+def test_ranking_digest_changes_when_a_ranked_value_changes():
+    original = rank_candidates([_row("A", rvol="3"), _row("B", rvol="1")], top_n=10)
+    changed = rank_candidates([_row("A", rvol="4"), _row("B", rvol="1")], top_n=10)
+    original_digest = ranking_digest(original.ranked_candidates, feature_registry_version="v1")
+    changed_digest = ranking_digest(changed.ranked_candidates, feature_registry_version="v1")
+    assert original_digest != changed_digest

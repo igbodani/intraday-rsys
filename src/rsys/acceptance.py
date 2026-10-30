@@ -32,13 +32,25 @@ def sort_proposals(proposals: list[Proposal]) -> list[Proposal]:
 
 
 class AcceptanceBook:
-    """Tracks which `proposal_id`s have already been accepted or rejected in this run."""
+    """Tracks which `proposal_id`s have already been accepted or rejected in this run.
 
-    def __init__(self) -> None:
+    `reservation_namespace` (typically a session's dated origin) prefixes the id actually
+    reserved on the (possibly cross-session) `Portfolio`, so an across-session-identical
+    `proposal_id` -- a strategy's own ids are time-of-day-only, not dated -- does not collide
+    with a retired reservation from a prior session. Duplicate-proposal detection within this
+    run still keys on the strategy's raw, unqualified `proposal_id`."""
+
+    def __init__(self, reservation_namespace: str | None = None) -> None:
         self._seen_ids: set[str] = set()
         self._sequence = 0
         self._accepted = {}
         self._pending_symbols = {}
+        self._reservation_namespace = reservation_namespace
+
+    def _qualify(self, proposal_id: str | None) -> str | None:
+        if proposal_id is None or self._reservation_namespace is None:
+            return proposal_id
+        return f"{self._reservation_namespace}:{proposal_id}"
 
     def accept(
         self,
@@ -60,7 +72,7 @@ class AcceptanceBook:
             self._pending_symbols.get(proposal.symbol)
         ):
             raise AcceptanceError("DUPLICATE_PENDING_OR_HELD")
-        reservation_id = portfolio.reserve(needed_cash, proposal.proposal_id)
+        reservation_id = portfolio.reserve(needed_cash, self._qualify(proposal.proposal_id))
         self._pending_symbols[proposal.symbol] = reservation_id
         self._sequence += 1
         if proposal.proposal_id is not None:

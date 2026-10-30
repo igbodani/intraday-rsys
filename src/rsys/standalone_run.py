@@ -15,6 +15,14 @@ from typing import Any, Protocol
 from rsys.acceptance import AcceptanceBook, sort_proposals
 from rsys.calendar import to_exchange_utc
 from rsys.data.events import ProviderBarEvent
+from rsys.execution_contract import (
+    FillTransition,
+    RejectedEntry,
+    commit_entry,
+    commit_exit,
+    decide_bar_open_entry,
+    decide_bar_open_gap_exit,
+)
 from rsys.money import amount
 from rsys.orders import AcceptedIntent, Proposal
 from rsys.phase_engine import PhaseEvent
@@ -120,7 +128,7 @@ class StandaloneRunner:
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
         )
-        self.book = AcceptanceBook()
+        self.book = AcceptanceBook(reservation_namespace=str(self.origin_ns))
         self.pending_intents: dict[str, AcceptedIntent] = {}
         self.entry_times: dict[str, int] = {}
         self.exit_due: set[str] = set()
@@ -445,31 +453,41 @@ class StandaloneRunner:
                 return
             if p.expires_at_ms is not None and point >= p.expires_at_ms:
                 self._cancel(symbol, point, "EXPIRED")
-            elif price <= p.stop:
-                self._cancel(symbol, point, "ENTRY_THROUGH_STOP")
             else:
-                try:
-                    qty, _ = self._quantity(
-                        p,
-                        price,
-                        self.portfolio.available_cash + intent.reserved_cash,
-                        p.quantity,
-                    )
-                except AcceptanceError as exc:
-                    self._cancel(symbol, point, exc.reason)
-                    return
-                self.portfolio.buy(
-                    symbol,
-                    qty,
+                decision = decide_bar_open_entry(
+                    p,
+                    point,
                     price,
-                    self.sizing.entry_fee,
-                    intent.reserved_cash,
-                    p.stop,
-                    None,
-                    reservation_id=intent.reservation_id,
-                    transaction_id=f"entry:{intent.reservation_id}",
+                    Decimal(0),
+                    self.portfolio.available_cash + intent.reserved_cash,
+                    entry_fee=self.sizing.entry_fee,
+                    exit_fee=self.sizing.exit_fee,
+                    risk_budget=self.sizing.risk_budget,
+                    quantity_step=self.sizing.quantity_step,
                 )
-                target = self.strategies[symbol].on_filled(price)
+                if isinstance(decision, RejectedEntry):
+                    self._cancel(symbol, point, decision.reason)
+                    return
+                modeled_price, qty = decision
+                transition = FillTransition(
+                    instrument=symbol,
+                    intent_identity=intent.reservation_id,
+                    activation_key=f"{symbol}:{point}",
+                    execution_reference_id=f"entry:{intent.reservation_id}",
+                    availability_key=point,
+                    quantity=qty,
+                    price=modeled_price,
+                    fee=self.sizing.entry_fee,
+                    reason="FILLED",
+                )
+                commit_entry(
+                    self.portfolio,
+                    transition,
+                    stop=p.stop,
+                    target=None,
+                    reserved_cash=intent.reserved_cash,
+                )
+                target = self.strategies[symbol].on_filled(modeled_price)
                 self.portfolio.positions[symbol].target = target
                 del self.pending_intents[symbol]
                 self.entry_times[symbol] = point
@@ -478,7 +496,7 @@ class StandaloneRunner:
                         point,
                         symbol,
                         "FILLED",
-                        price,
+                        modeled_price,
                         qty,
                         target,
                         self.sizing.entry_fee,
@@ -503,12 +521,18 @@ class StandaloneRunner:
         pos = self.portfolio.positions[symbol]
         qty = pos.quantity
         pnl = price * qty - self.sizing.exit_fee - pos.basis
-        self.portfolio.sell(
-            symbol,
-            price,
-            self.sizing.exit_fee,
-            transaction_id=f"exit:{symbol}:{self.entry_times[symbol]}",
+        transition = FillTransition(
+            instrument=symbol,
+            intent_identity=f"position:{symbol}",
+            activation_key=f"{symbol}:{self.entry_times[symbol]}",
+            execution_reference_id=f"exit:{symbol}:{self.entry_times[symbol]}",
+            availability_key=point,
+            quantity=qty,
+            price=price,
+            fee=self.sizing.exit_fee,
+            reason=reason,
         )
+        commit_exit(self.portfolio, transition)
         self.strategies[symbol].on_position_closed()
         self.entry_times.pop(symbol)
         self.exit_due.discard(symbol)
@@ -535,12 +559,15 @@ class StandaloneRunner:
             raise IncompleteSessionError(
                 "overlapping unpublished position intervals are unsupported"
             )
-        if symbol in self.exit_due:
-            self._exit(symbol, point, price, "TIMER", event_time=point)
-        elif pos.stop is not None and price <= pos.stop:
-            self._exit(symbol, point, price, "STOP_GAP", event_time=point)
-        elif pos.target is not None and price >= pos.target:
-            self._exit(symbol, point, pos.target, "TARGET_GAP", event_time=point)
+        decision = decide_bar_open_gap_exit(
+            pos, price, Decimal(0), symbol in self.exit_due
+        )
+        if decision is None:
+            return
+        label = {"pending": "TIMER", "stop": "STOP_GAP", "target": "TARGET_GAP"}[
+            decision.kind
+        ]
+        self._exit(symbol, point, decision.price, label, event_time=point)
 
     def _settle(self, symbol, bar):
         if self._intervals.get(symbol) != bar.bar_start_ms:

@@ -136,7 +136,10 @@ class TradeExecutionAdapter:
         self.entry_time_ms = event_time_ms
         self.entry_available_ms = available_at_ms
 
-    def consider_exit(self, position: Position, trade: Trade) -> FillOutcome:
+    def _exit_eligibility(self, trade: Trade) -> FillOutcome | None:
+        """The gates shared by `consider_exit` and `force_exit`: duplicate identity, already
+        filled, stale/corrected/cancelled, bad quality, self-consumption and activation
+        ordering. Returns a rejection `FillOutcome`, or `None` when the trade is eligible."""
         self._validate_identity(trade)
         if self.exit_trade_id is not None:
             return FillOutcome(ALREADY_FILLED, trade_id=trade.trade_id)
@@ -157,6 +160,12 @@ class TradeExecutionAdapter:
             or trade.available_at_ms <= self.entry_available_ms
         ):
             return FillOutcome(REJECTED_STALE, trade_id=trade.trade_id)
+        return None
+
+    def consider_exit(self, position: Position, trade: Trade) -> FillOutcome:
+        rejected = self._exit_eligibility(trade)
+        if rejected is not None:
+            return rejected
         if position.stop is not None and trade.price <= position.stop:
             self.exit_trade_id = trade.trade_id
             return FillOutcome(
@@ -176,6 +185,19 @@ class TradeExecutionAdapter:
                 fee=self.exit_fee,
             )
         return FillOutcome(SKIPPED, trade_id=trade.trade_id)
+
+    def force_exit(self, trade: Trade, reason: str) -> FillOutcome:
+        """A due timer/flatten boundary has already passed: the next otherwise-eligible
+        trade becomes the exit reference unconditionally, instead of waiting for a stop/
+        target cross (M2-01T Do #6 -- never an invented bar open). Still subject to every
+        ordinary eligibility gate via `_exit_eligibility`."""
+        rejected = self._exit_eligibility(trade)
+        if rejected is not None:
+            return rejected
+        self.exit_trade_id = trade.trade_id
+        return FillOutcome(
+            FILLED, price=trade.price, trade_id=trade.trade_id, reason=reason, fee=self.exit_fee
+        )
 
     def apply_correction(self, corrected_trade_id: str) -> None:
         """Corrections/cancellations invalidate the referenced trade causally; they never
