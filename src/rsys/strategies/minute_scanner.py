@@ -46,6 +46,11 @@ class MinuteHistoryScanner:
         self.session_date = session_date
         self.symbols = sorted(symbols)
         self.feed = feed
+        self.feature_version = (
+            HISTORY_SCANNER_VERSION
+            if feed == "fixture"
+            else "historical_final_bar_features_v1"
+        )
         self.lookback_sessions = lookback_sessions
         self.max_lookback = max_lookback_calendar_sessions
         self.min_dollar_volume = min_dollar_volume
@@ -181,16 +186,16 @@ class MinuteHistoryScanner:
         return HistoryScan(
             scan,
             {
-                "mode": HISTORY_SCANNER_VERSION,
+                "mode": self.feature_version,
                 "as_of": as_of.isoformat(),
                 "symbols": symbols,
                 "ranking": ranking_evidence(
                     scan.ranked_candidates,
-                    feature_registry_version=HISTORY_SCANNER_VERSION,
+                    feature_registry_version=self.feature_version,
                 ),
                 "ranking_digest": ranking_digest(
                     scan.ranked_candidates,
-                    feature_registry_version=HISTORY_SCANNER_VERSION,
+                    feature_registry_version=self.feature_version,
                 ),
                 "current_input_versions": context.input_references(),
             },

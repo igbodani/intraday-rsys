@@ -168,3 +168,10 @@ class RunRecord(BaseModel):
     # (True, even if that config happened to contain zero secrets) vs. simply defaulted to
     # empty because the record was reloaded from disk (False, genuinely unknown) -- C04.
     _secret_values_known: bool = PrivateAttr(default=False)
+
+
+@dataclass(frozen=True)
+class DatePartition:
+    name: str
+    start: str
+    end: str

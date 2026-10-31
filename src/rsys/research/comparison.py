@@ -68,8 +68,13 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
             "trace.jsonl",
         }
         required.update(f"sessions/{day}.json" for day in manifest["session_dates"])
-        if manifest.get("scanner_basis") == "synthetic_minute_history_v1":
+        if manifest.get("scanner_basis") in (
+            "synthetic_minute_history_v1",
+            "historical_final_bar_features_v1",
+        ):
             required.add("scanner_history.json")
+        if manifest.get("evidence_type") == "historical_bar_estimate":
+            required.add("data_access.json")
         if (
             not required <= hashes.keys()
             or manifest.get("metrics_scope") != "complete_attempt"
@@ -119,6 +124,7 @@ def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptio
             [
                 manifest.get("completion_policy"),
                 manifest.get("input_mode"),
+                manifest.get("historical_source"),
                 *[
                     manifest[k]
                     for k in (

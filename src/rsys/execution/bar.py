@@ -55,6 +55,8 @@ class BarSessionRunner(RiskManagedRunner):
         risk: RiskMonitor | None = None,
         costs: ExecutionCosts | None = None,
         history_scanner: MinuteHistoryScanner | None = None,
+        provider: str = "synthetic",
+        feed: str = "fixture",
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -65,6 +67,7 @@ class BarSessionRunner(RiskManagedRunner):
         self.risk = risk
         self.costs = costs or ExecutionCosts()
         self.history_scanner = history_scanner
+        self.provider, self.feed = provider, feed
         self.origin_ns = (
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
@@ -111,8 +114,8 @@ class BarSessionRunner(RiskManagedRunner):
                 source = ProviderBarEvent(
                     event_id=identity,
                     instrument_id=symbol,
-                    provider="synthetic",
-                    feed="fixture",
+                    provider=self.provider,
+                    feed=self.feed,
                     event_time_ns=self._ns(bar.bar_start_ms),
                     available_at_ns=self._ns(bar.available_at_ms),
                     event_time_meaning="provider_market_time",

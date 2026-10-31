@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "cache": "../data/alpaca",
+  "dataset": {
+    "symbol": "AAPL",
+    "feed": "CHOOSE_sip_OR_iex",
+    "asof": "-"
+  },
+  "purpose": "development",
+  "partitions": [],
+  "objects": {},
+  "sessions": [
+    "2024-11-29",
+    "2024-12-02"
+  ],
+  "timing_basis": "final_bars_modeled_at_end",
+  "account": {
+    "initial_cash": "1000",
+    "sizing": {
+      "quantity_step": "1",
+      "max_quantity": null
+    },
+    "risk": {
+      "per_trade_fraction": "0.03",
+      "daily_loss_fraction": "0.05",
+      "maximum_drawdown_fraction": "0.20",
+      "daily_loss_basis": "session_start_equity",
+      "halt_action": "cancel_entries_keep_exits"
+    },
+    "costs": {
+      "adverse_bps": "5",
+      "feed_delay_ms": 250,
+      "entry_fee": "0",
+      "exit_fee": "0"
+    },
+    "execution": {
+      "decision_latency_ms": 0,
+      "max_hold_ms": 3600000
+    },
+    "completion_policy": "require_flat",
+    "flatten_at": "12:55:00"
+  },
+  "strategy": {
+    "strategy": "orb_close_cross_v1",
+    "strategy_config": {}
+  },
+  "scanner": {
+    "top_n": 20,
+    "lookback_sessions": 20,
+    "max_lookback_calendar_sessions": 252,
+    "min_dollar_volume": null,
+    "max_current_bar_age_ms": null
+  },
+  "action_review": {
+    "status": "pending",
+    "source": "",
+    "start": "2024-01-02",
+    "end": "2024-12-02"
+  }
+}

@@ -96,6 +96,17 @@ def _scanner_details(records: list[dict[str, Any]]) -> str:
 
 
 def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> str:
+    historical = manifest.get("evidence_type") == "historical_bar_estimate"
+    title = (
+        "Historical bars — simulated account"
+        if historical
+        else "Synthetic account execution"
+    )
+    warning = (
+        "Final historical bars with modeled timing; not recorded arrivals or real fills. Unscored research evidence"
+        if historical
+        else "Synthetic, offline evidence; not a market-performance claim"
+    )
     metrics = manifest.get("metrics", {})
     trade_count = metrics.get("completed_trade_count", 0)
     status_label = (
@@ -123,6 +134,7 @@ def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> st
         )
     details = ""
     for key in (
+        "historical_source",
         "error",
         "risk",
         "costs",
@@ -146,8 +158,8 @@ th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left; }}
 </style>
 </head>
 <body>
-<h1>Synthetic account execution — run {_esc(manifest["run_id"])}</h1>
-<p><em>Synthetic, offline evidence; not a market-performance claim. Status: {_esc(status_label)}.</em></p>
+<h1>{_esc(title)} — run {_esc(manifest["run_id"])}</h1>
+<p><em>{_esc(warning)}. Status: {_esc(status_label)}.</em></p>
 <p class="summary">
 <span>Universe: {_esc(manifest.get("universe"))}</span>
 <span>Starting equity: {_esc(manifest.get("starting_equity", "unavailable"))}</span>

@@ -1,6 +1,6 @@
 # intraday-rsys
 
-Offline, synthetic-first implementation of the intraday research system governed by `AGENTS.md` and `docs/`. No market data acquisition, broker access or trading is implemented.
+Offline, synthetic-first implementation of the intraday research system governed by `AGENTS.md` and `docs/`. Alpaca historical-bar acquisition and offline cached backtests are implemented. No broker orders or live trading are implemented. Credential-backed provider verification remains outstanding.
 
 Start with [the package and model map](docs/ARCHITECTURE.md) and [the documentation index](docs/README.md). Each functional package owns a `models.py`; runtime services live beside it.
 
@@ -19,6 +19,8 @@ For agent-assisted development, use [the Copilot workflow](docs/COPILOT_WORKFLOW
 - Explicit policies: current-equity sizing, daily-loss and account-drawdown entry halts, adverse execution costs, fixed fees, feed delay and decision latency. Halts release pending reservations while protective exits continue. Dated/as-of synthetic scanner history now runs through the public CLI in both input modes, with explicit freshness limits and retained ranking/revision evidence. See [the history-scanner guide](docs/HISTORY_SCANNER_INTEGRATION.md).
 
 Read [PUBLIC_SESSION_RUNS.md](docs/PUBLIC_SESSION_RUNS.md) for the new interface, policy semantics and retained evidence, and [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md) for the module/test inventory and Copilot work order. [DEVELOP_REPAIR_RESULTS.md](docs/DEVELOP_REPAIR_RESULTS.md), [M2_REPAIR_RESULTS.md](docs/M2_REPAIR_RESULTS.md) and [R3_REPAIR_RESULTS.md](docs/R3_REPAIR_RESULTS.md) retain the repair history.
+
+See [ALPACA_LOCAL_BACKTEST.md](docs/ALPACA_LOCAL_BACKTEST.md) for download/cache/backtest commands, deliberately blocked configuration templates, data-quality checks and remaining provider verification.
 
 ## Run locally
 
@@ -41,7 +43,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **851 passing tests**, including 37 new public-history/calendar integration checks, 11 Copilot-configuration checks, 38 minute-history provider cases and 48 existing public-session cases. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The verified suite contains **881 passing tests**, including 30 Alpaca pipeline checks and 37 public-history/calendar integration checks, 11 Copilot-configuration checks, 38 minute-history provider cases and 48 existing public-session cases. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 
@@ -55,6 +57,6 @@ Quote freshness is measured from availability at the decision clock under the de
 
 ## Current limits and next ticket
 
-The account/session layer is a tested synthetic subset of M2. Public trade/multi-session execution and explicit research risk/cost policies now exist. Next, complete dated/as-of historical loading and loader-level holdout protection. The public history scanner derives scores from declared minute observations at each bounded replay decision; audited provider history is still missing. The detailed gates are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
+The account/session layer is a tested synthetic subset of M2. Public trade/multi-session execution and explicit research risk/cost policies now exist. The initial Alpaca raw-bar download/cache path and date guards now exist. Next, verify credentials/feed coverage and a small real-data sample, resolve research settings and expand the bounded data/action/calendar support. The public history scanner derives scores from declared minute observations at each bounded replay decision; audited provider history is still missing. The detailed gates are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
 
 `fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts legacy synthetic bars or the new explicit bar/trade session schema. Version-2 composition requires flat intermediate sessions; a final open snapshot must be explicitly allowed and remains diagnostic. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09/D12/D22 remain Open; D13/D16/D17 are Proposed. D10/D11 are enforced when explicitly configured through the version-2 synthetic interface; the pending research YAML and historical experiment protocol remain blocked.

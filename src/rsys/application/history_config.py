@@ -52,8 +52,15 @@ def parse_scanner(config):
         "history",
     }
     fields(spec, required, required)
+    expected_feed = (
+        config["historical_source"]["feed"]
+        if config.get("evidence_type") == "historical_bar_estimate"
+        else "fixture"
+    )
+    if expected_feed not in ("fixture", "sip", "iex"):
+        raise RunConfigError("Unsupported history feed")
     if (spec["feed"], spec["unit_basis"], spec["corporate_actions"]) != (
-        "fixture",
+        expected_feed,
         "raw",
         "none",
     ):
