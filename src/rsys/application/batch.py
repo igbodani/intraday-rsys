@@ -16,6 +16,7 @@ from rsys.account.risk import RiskMonitor
 from rsys.application.batch_config import execution_costs, risk_policy, validate_batch
 from rsys.application.builders import build_bar, build_strategy
 from rsys.application.errors import RunConfigError
+from rsys.application.history_config import build_history_scanner, parse_scanner
 from rsys.application.results import summarize_runner
 from rsys.application.session_config import ms
 from rsys.application.sessions import SessionCoordinator
@@ -32,6 +33,7 @@ from rsys.research.experiments import (
 )
 from rsys.research.multi_session import compute_multi_session_metrics
 from rsys.research.storage import RunStorage, canonical_hash
+from rsys.strategies.minute_scanner import HISTORY_SCANNER_VERSION
 
 
 def _decimal(value):
@@ -53,6 +55,7 @@ class SessionBatch:
     def __init__(self, config):
         validate_batch(config)
         self.config = deepcopy(config)
+        self.history = parse_scanner(self.config)
         self.config.setdefault("top_n", 20)
         for session in self.config["sessions"]:
             for symbol, spec in session["symbols"].items():
@@ -163,12 +166,20 @@ class SessionBatch:
                     )
                     for s, row in rows.items()
                 }
-                for t, rows in plan["scanner_inputs"].items()
+                for t, rows in plan.get("scanner_inputs", {}).items()
             }
             record["status"] = "failed"
             self.coordinator.last_runner = None
             try:
-                runner = self.coordinator.run_session(day, data, scanner, corrections)
+                runner = self.coordinator.run_session(
+                    day,
+                    data,
+                    scanner,
+                    corrections,
+                    history_scanner=build_history_scanner(
+                        self.config, self.history, day, plan["symbols"]
+                    ),
+                )
                 if self.portfolio.positions and (
                     index < len(self.sessions) - 1
                     or self.config["completion_policy"] == "require_flat"
@@ -284,7 +295,13 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
             "dependency_lock_hash": record.dependency_lock_hash,
             "calendar_version": "nyse-2024-v1",
             "account_basis": "synthetic_immediate_settlement",
-            "scanner_basis": "supplied_synthetic_scores",
+            "scanner_basis": "unresolved_invalid_config"
+            if batch is None
+            else (
+                HISTORY_SCANNER_VERSION
+                if batch.history is not None
+                else "supplied_synthetic_scores"
+            ),
         }
         with run_context(storage, record):
             try:
@@ -336,8 +353,15 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                                 for d, p in batch.plans.items()
                             }
                         ),
+                        "scanner_basis": HISTORY_SCANNER_VERSION
+                        if batch.history is not None
+                        else "supplied_synthetic_scores",
                         "scanner_hash": canonical_hash(
-                            {d: p["scanner_inputs"] for d, p in batch.plans.items()}
+                            batch.config["scanner"]
+                            if batch.history is not None
+                            else {
+                                d: p["scanner_inputs"] for d, p in batch.plans.items()
+                            }
                         ),
                     }
                 )
@@ -368,10 +392,21 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                 # text-mode newline translation. The verifier still hashes raw bytes.
                 trace_bytes = trace_text.encode("utf-8")
                 trace_path.write_bytes(trace_bytes)
-                manifest["semantic_trace_hash"] = hashlib.sha256(trace_bytes).hexdigest()
+                manifest["semantic_trace_hash"] = hashlib.sha256(
+                    trace_bytes
+                ).hexdigest()
                 write_json(attempt / "input.json", redact_secrets(config))
                 write_json(attempt / "resolved_config.json", record.resolved_config)
                 write_json(attempt / "fills.json", summary.get("fills", []))
+                if batch is not None and batch.history is not None:
+                    write_json(
+                        attempt / "scanner_history.json",
+                        {
+                            identity: snapshot
+                            for runner in batch.runners
+                            for identity, snapshot in runner.history_scanner.snapshots.items()
+                        },
+                    )
                 write_json(
                     attempt / "metrics.json",
                     {

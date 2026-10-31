@@ -321,9 +321,9 @@ class MinuteHistoryProvider:
     "as of right now"; it only ever answers from what was visible by its own declared
     `as_of`, the same as-of discipline `BarVersionStore.as_of` already applies to live bar
     publications. This remains a declared offline/fixture provider (D12/D13 stay Open); it is
-    not an Alpaca/audited adapter, and composing it across multiple same-session elapsed
-    minutes (as `strategies.history.build_scanner_inputs` does for supplied scores) is a
-    separate, not-yet-connected next step.
+    not an Alpaca/audited adapter. `strategies.minute_scanner.MinuteHistoryScanner` now
+    creates fresh instances at each public synthetic replay decision; the legacy
+    `strategies.history.build_scanner_inputs` remains a precomputed fixture helper.
     """
 
     def __init__(

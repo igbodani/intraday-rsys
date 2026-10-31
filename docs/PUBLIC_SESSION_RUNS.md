@@ -18,7 +18,7 @@ Existing version-1 `synthetic_standalone` files remain supported without adoptin
 
 ## Version-2 configuration
 
-Use the complete JSON fixtures as runnable examples. All fields below are required except `top_n`, which resolves to 20. Unknown fields, unsupported dates/modes, nonfinite numbers, boolean numeric values and missing policy conventions fail before execution.
+Use the complete JSON fixtures as runnable examples. All fields below are required except `top_n`, which resolves to 20, and the optional `scanner` selector described below. Unknown fields, unsupported dates/modes, nonfinite numbers, boolean numeric values and missing policy conventions fail before execution.
 
 | Field | Contract |
 |---|---|
@@ -32,11 +32,12 @@ Use the complete JSON fixtures as runnable examples. All fields below are requir
 | `costs` | Explicit nonnegative `entry_fee`, `exit_fee`, combined `adverse_bps` below 10000, integer `feed_delay_ms` |
 | `execution` | Explicit `max_hold_ms` (positive integer or null) and nonnegative integer `decision_latency_ms` |
 | `completion_policy` | `require_flat`, or `allow_final_open_snapshot` for a deliberately diagnostic last session |
-| `sessions` | Nonempty list of strictly increasing, unique dates; each session has `date`, `symbols`, `scanner_inputs`, `flatten_at` |
+| `scanner` | Optional; omitted or `{"mode":"supplied"}` retains supplied scores. Explicit `minute_history` mode is described in [HISTORY_SCANNER_INTEGRATION.md](HISTORY_SCANNER_INTEGRATION.md) |
+| `sessions` | Nonempty list of strictly increasing, unique dates; each session has `date`, `symbols`, `flatten_at`, plus `scanner_inputs` only in supplied mode |
 
 `flatten_at` is a local clock time (or dated local timestamp) strictly before the declared calendar close, or null. No position may carry into another session. A missing required execution reference, an intermediate open position or an execution clock that overlaps the next session is incomplete, not success. A failed coordinator cannot be retried/advanced with its partially executed account. Calendar coverage remains the declared NYSE 2024 fixture calendar.
 
-Each symbol specifies `strategy` (`orb_close_cross_v1` or `vwap_touch_hold_v1`), optional `strategy_config` and `session_open`. Resolved strategy defaults are retained. Scanner scores are explicitly supplied synthetic `{rvol, gain}` observations; missing values exclude the symbol. Scanner exit does not disable position protection.
+Each symbol specifies `strategy` (`orb_close_cross_v1` or `vwap_touch_hold_v1`), optional `strategy_config` and `session_open`. Resolved strategy defaults are retained. In supplied mode, scanner scores are explicit synthetic `{rvol, gain}` observations; missing values exclude the symbol. In `minute_history` mode, bounded completed bars and declared dated/as-of history produce scores at each decision, with explicit freshness and liquidity settings; no session may also supply `scanner_inputs`. Scanner exit does not disable position protection.
 
 - Bar symbols provide the existing dated one-minute `bars` schema: `bar_start`, `bar_end`, `available_at`, OHLC and volume. VWAP begins at the session open.
 - Trade symbols provide `trades`, with required `trade_id`, dated `event_time` and `available_at`, positive `price`/`size`, and boolean `quality_ok`. Optional `conditions` and `tape` are preserved. Only declared fixture condition codes are accepted. Distinct equal-market-time prints remain explicitly unsupported by this millisecond account adapter; a real-provider full-key adapter is later work.
@@ -69,6 +70,7 @@ Every invocation receives a new run ID and authoritative SQLite lifecycle. Succe
 - `input.json`: complete parsed input with recognized credential fields redacted; the run record separately stores the original input-byte SHA-256.
 - `resolved_config.json`: full settings and resolved strategy defaults.
 - `trace.jsonl`: session-tagged chronological decisions, acceptance, cancellations, fills, account snapshots and risk states.
+- `scanner_history.json` in history mode: content-addressed exact revision snapshots referenced by decision explanations.
 - `fills.json`, `metrics.json`, and `sessions/YYYY-MM-DD.json` for each planned session, including failed and not-started states.
 - `manifest.json`: configuration/data/code/dependency identities, execution/scanner/account bases, completion status, summaries and artifact hashes.
 - `report.html` when `--report` is requested, including failure details, session dates, policy settings and partial-result labels. Failure output identifies the retained run and manifest.
@@ -83,11 +85,11 @@ Drawdown includes starting capital and remains session-end-only as a descriptive
 
 ## Tests and next work
 
-`tests/test_public_sessions.py` contains 48 cases covering subprocess runs, both strategies/modes, exact two-session balances, fees/bps, fill budgets, source and decision delays, future-session invariance, daily/account halt latches, cancellation before entry, continuing protection, zero trades, failure/interruption retention, validation, redaction, HTML escaping and artifact tampering. Two cases emulate Windows CRLF translation and verify both successful comparison and rejection of subsequently altered trace bytes. The full suite now passes **814 tests** on Linux and Ruff is clean. The earlier package-integration pass also verified 25 public-command invocations with expected exits and repeatability checks (see [ARCHITECTURE.md](ARCHITECTURE.md)). Failed/handled-interrupted construction and execution attempts remain tested for retained evidence and truthful lifecycle status.
+`tests/test_public_sessions.py` contains 48 cases covering subprocess runs, both strategies/modes, exact two-session balances, fees/bps, fill budgets, source and decision delays, future-session invariance, daily/account halt latches, cancellation before entry, continuing protection, zero trades, failure/interruption retention, validation, redaction, HTML escaping and artifact tampering. Two cases emulate Windows CRLF translation and verify both successful comparison and rejection of subsequently altered trace bytes. The full suite now passes **851 tests** on Linux and Ruff is clean. The history-scanner integration adds 33 public-path cases and four calendar/coverage cases; see [HISTORY_SCANNER_INTEGRATION.md](HISTORY_SCANNER_INTEGRATION.md). The earlier package-integration pass also verified 25 public-command invocations with expected exits and repeatability checks (see [ARCHITECTURE.md](ARCHITECTURE.md)). Failed/handled-interrupted construction and execution attempts remain tested for retained evidence and truthful lifecycle status.
 
 ```bash
 uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-Still outside these two priorities: Alpaca ingestion, real minute-addressable/as-of scanner history, verified feed/universe/corporate-action coverage, real account/settlement semantics, full equal-timestamp execution keys, loader-level holdout enforcement, frozen promotion protocol, optimizer and paper/live trading.
+Still outside these two priorities: Alpaca ingestion, audited market histories, verified feed/universe/corporate-action coverage, real account/settlement semantics, full equal-timestamp execution keys, loader-level holdout enforcement, frozen promotion protocol, optimizer and paper/live trading.

@@ -121,6 +121,7 @@ class DecisionRecord:
     input_versions: tuple[str, ...] = ()
     ranked: list[str] = field(default_factory=list)
     excluded: dict[str, str] = field(default_factory=dict)
+    scanner_evidence: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
