@@ -364,10 +364,11 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                 trace_text = "".join(
                     json.dumps(r, sort_keys=True, default=str) + "\n" for r in rows
                 )
-                trace_path.write_text(trace_text, encoding="utf-8")
-                manifest["semantic_trace_hash"] = hashlib.sha256(
-                    trace_text.encode()
-                ).hexdigest()
+                # Hash exactly the canonical bytes written, independent of Windows
+                # text-mode newline translation. The verifier still hashes raw bytes.
+                trace_bytes = trace_text.encode("utf-8")
+                trace_path.write_bytes(trace_bytes)
+                manifest["semantic_trace_hash"] = hashlib.sha256(trace_bytes).hexdigest()
                 write_json(attempt / "input.json", redact_secrets(config))
                 write_json(attempt / "resolved_config.json", record.resolved_config)
                 write_json(attempt / "fills.json", summary.get("fills", []))

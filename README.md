@@ -41,7 +41,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **774 passing tests**, including 11 Copilot-configuration checks. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The verified suite contains **814 passing tests**, including 11 Copilot-configuration checks, 38 minute-history cases and 48 public-session cases. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 

@@ -74,6 +74,39 @@ def prior_sessions(
 
 MISSING_MINUTE = "MISSING_MINUTE"
 UNSUPPORTED_UNIT_BASIS = "UNSUPPORTED_UNIT_BASIS"
+SESSION_TOO_SHORT = "SESSION_TOO_SHORT"
+
+
+def _positive_integer(value: int, name: str) -> None:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _aware_timestamp(value: datetime, name: str) -> None:
+    if not isinstance(value, datetime) or value.utcoffset() is None:
+        raise ValueError(f"{name} must have an explicit timezone")
+
+
+def _validate_minute_payload(observation: MinuteObservation) -> None:
+    """Validate the selected visible revision, never an unavailable future payload."""
+    if (
+        not isinstance(observation.volume, Decimal)
+        or not observation.volume.is_finite()
+        or observation.volume < 0
+    ):
+        raise ValueError("minute volume must be a nonnegative finite Decimal")
+    if observation.status == ObservationStatus.NO_TRADE:
+        if observation.volume != 0 or observation.close is not None:
+            raise ValueError("a verified NO_TRADE minute must have zero volume and no close")
+    elif observation.status == ObservationStatus.TRADED:
+        if (
+            not isinstance(observation.close, Decimal)
+            or not observation.close.is_finite()
+            or observation.close <= 0
+        ):
+            raise ValueError("a TRADED minute close must be a positive finite Decimal")
+    else:
+        raise ValueError("minute status must be TRADED or NO_TRADE")
 
 
 def candidate_prior_session_dates(
@@ -86,8 +119,7 @@ def candidate_prior_session_dates(
     coverage boundary instead of raising past it: running out of covered calendar is
     insufficient history, not an error.
     """
-    if max_lookback_calendar_sessions < 1:
-        raise ValueError("max_lookback_calendar_sessions must be a positive integer")
+    _positive_integer(max_lookback_calendar_sessions, "max_lookback_calendar_sessions")
     dates: list[date] = []
     cursor = decision_date
     while len(dates) < max_lookback_calendar_sessions:
@@ -105,32 +137,33 @@ def _select_minute(
     candidates: list[MinuteObservation], *, feed: str, as_of: datetime
 ) -> tuple[MinuteObservation | None, str | None]:
     """The highest-revision observation visible by `as_of` under `feed`, or `(None,
-    MISSING_MINUTE)` if nothing is visible yet -- a delayed first publication and an
-    as-yet-invisible later revision are both just "not visible", never backfilled with an
-    older revision. Raises for a genuinely ambiguous input: two distinct observations
-    claiming the same highest revision with different payloads."""
-    visible = [o for o in candidates if o.feed == feed and o.available_at <= as_of]
+    MISSING_MINUTE)` if nothing is visible yet. A future correction cannot displace a
+    currently visible revision. Equal revisions must agree on payload and provenance;
+    otherwise reject them instead of retaining whichever input happened to come first.
+    """
+    visible = []
+    for observation in candidates:
+        if observation.feed != feed:
+            continue
+        _aware_timestamp(observation.available_at, "available_at")
+        if observation.available_at <= as_of:
+            if type(observation.revision) is not int or observation.revision < 0:
+                raise ValueError("minute revision must be a nonnegative integer")
+            visible.append(observation)
     if not visible:
         return None, MISSING_MINUTE
     max_revision = max(o.revision for o in visible)
     top = [o for o in visible if o.revision == max_revision]
+    for observation in top:
+        _validate_minute_payload(observation)
     first = top[0]
     for other in top[1:]:
-        if (other.status, other.unit_basis, other.close, other.volume) != (
-            first.status,
-            first.unit_basis,
-            first.close,
-            first.volume,
-        ):
+        if other != first:
             raise ValueError(
                 "ambiguous minute revision for "
                 f"{first.instrument_id} {first.session_date.isoformat()} "
                 f"minute {first.minute_index} revision {max_revision}"
             )
-    if first.status == ObservationStatus.NO_TRADE and (
-        first.volume != 0 or first.close is not None
-    ):
-        raise ValueError("a verified NO_TRADE minute must have zero volume and no close")
     if first.unit_basis != UnitBasis.RAW:
         return first, UNSUPPORTED_UNIT_BASIS
     return first, None
@@ -195,23 +228,34 @@ def build_minute_history_sessions(
     dates to even attempt is decided by the declared calendar
     (`candidate_prior_session_dates`), never by whichever dates a provider happens to supply.
     A session shorter than `elapsed_minutes` (an early close) is still returned with its real
-    scheduled duration so `compute_cumulative_rvol`'s own duration filter excludes it; only
-    its own full (shorter) duration is checked for coverage, since a value beyond its own
-    close does not exist to be missing or available."""
+    scheduled duration so `compute_cumulative_rvol`'s own duration filter excludes it.
+    Its observations are never inspected: they cannot establish coverage through the
+    requested minute, and malformed data in that ineligible session cannot affect RVOL.
+    """
+    _positive_integer(elapsed_minutes, "elapsed_minutes")
+    _aware_timestamp(as_of, "as_of")
     dates = candidate_prior_session_dates(
         decision_date, max_lookback_calendar_sessions=max_lookback_calendar_sessions
     )
     builds = []
     for session_date in dates:
         duration = session_duration_minutes(session_date)
-        required = min(elapsed_minutes, duration)
+        if duration < elapsed_minutes:
+            builds.append(
+                SelectedSession(
+                    history_session=HistorySession(session_date, duration, None, False),
+                    selected_revisions=(),
+                    exclusion_reason=SESSION_TOO_SHORT,
+                )
+            )
+            continue
         builds.append(
             _build_session(
                 observations,
                 symbol=symbol,
                 feed=feed,
                 session_date=session_date,
-                required_minutes=required,
+                required_minutes=elapsed_minutes,
                 scheduled_duration_minutes=duration,
                 as_of=as_of,
             )
@@ -231,6 +275,7 @@ def build_previous_session_observation(
     close used for session gain and the previous full-session volume/close used for prior-day
     dollar-volume eligibility (docs/data_rules.md); never the RVOL lookback's same-elapsed-
     minute slice, which `build_minute_history_sessions` computes separately."""
+    _aware_timestamp(as_of, "as_of")
     dates = candidate_prior_session_dates(decision_date, max_lookback_calendar_sessions=1)
     if not dates:
         return PreviousSessionObservation(None, None, None, (), MISSING_MINUTE)
@@ -290,6 +335,9 @@ class MinuteHistoryProvider:
         as_of: datetime,
         max_lookback_calendar_sessions: int = 252,
     ) -> None:
+        _positive_integer(elapsed_minutes, "elapsed_minutes")
+        _positive_integer(max_lookback_calendar_sessions, "max_lookback_calendar_sessions")
+        _aware_timestamp(as_of, "as_of")
         self._history = history
         self._feed = feed
         self._elapsed_minutes = elapsed_minutes
