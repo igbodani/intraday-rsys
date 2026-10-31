@@ -24,6 +24,18 @@ At a morning minute, both full and shortened sessions can qualify because both c
 
 Examples H01–H03 in `data_cases.json` establish the exact selection rule. F06 still handles flattening at the actual current session close.
 
+## Minute-addressable, as-of history (`data/history.py`)
+
+`MinuteObservation` carries one revision of one elapsed minute's declared coverage for one instrument/session/feed: instrument identity, feed, source, session date, 0-based elapsed minute index, an `available_at` timestamp (when that exact revision became knowable), a `revision` number, a `TRADED`/`NO_TRADE` status, a declared unit basis and the close/volume. `MinuteHistoryProvider` selects, among a minute's declared revisions, only the highest-revision observation visible at or before an explicit decision `as_of` cutoff -- a delayed first publication and an as-yet-invisible later correction are both simply not visible yet, never backfilled with an older revision or a guessed value. Two observations claiming the same highest revision with different payloads are ambiguous input and raise, not a silently resolved pick.
+
+A minute absent from the declared observations entirely -- or whose only revisions are not yet visible by the cutoff -- is a coverage gap (`MISSING_MINUTE`): the affected session's cumulative volume stays unavailable, never zero. A minute explicitly recorded as `NO_TRADE` (verified zero trades) contributes a real zero to that sum; a session built entirely from verified no-trade minutes is coverage-complete with a legitimately zero cumulative volume, which `features.compute_cumulative_rvol` then reports as `ZERO_DENOMINATOR`, distinct from `MISSING_SELECTED_HISTORY`.
+
+`MinuteHistoryProvider` only accepts `UnitBasis.RAW` observations as a point-in-time feature input; a `SPLIT_ADJUSTED` observation is excluded with `UNSUPPORTED_UNIT_BASIS` rather than silently treated as comparable raw history, since its action boundary is unverified (D20). It does not itself apply `convert_split_units`'s as-of split conversion; a caller needing that must still convert explicitly.
+
+Candidate prior-session dates come strictly from the declared calendar (`candidate_prior_session_dates`), never from whichever dates a provider's observations happen to include, and the search stops at the calendar's declared coverage boundary (treated as insufficient history, not an error) instead of raising past it.
+
+One `MinuteHistoryProvider` instance is fixed to one `elapsed_minutes`/`as_of`/`feed` decision, because the existing `HistoryProvider` protocol carries no elapsed-minute parameter; construct a fresh instance for a different elapsed-minute or cutoff. Composing it across a session's multiple elapsed minutes through `strategies.history.build_scanner_inputs` remains a separate, not-yet-connected next step. `MinuteHistoryProvider.session_builds`/`.previous_session_build` retain the exact denominator sessions, selected revisions and exclusion reasons used for the most recent call, for later reconstruction.
+
 ## Feed consistency (D12)
 
 Alpaca distinguishes the single-exchange IEX feed from consolidated SIP data [2]. Therefore volume, RVOL and dollar-volume eligibility describe the selected feed's coverage. A limited-feed value must not be presented as total-market volume or pooled with another feed under an unchanged threshold.

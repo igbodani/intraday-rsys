@@ -40,7 +40,7 @@ flowchart TD
 
 Core data/account/replay/strategy/execution packages do not import CLI or application orchestration. Model modules may depend on other model/error modules and small validation/time/money utilities, never runners or storage services. `application/builders.py` constructs strategies and runners; batches no longer import construction helpers from a CLI/run module. `application/results.py` summarizes a session without invoking another run.
 
-The history provider contract lives in `data/providers.py`. `data/history.py` contains the synthetic provider and dated history selection. `strategies/history.py` turns that history into scanner candidates. This is an explicit place to add a future audited provider; it is not an Alpaca adapter or a new historical-data capability.
+The history provider contract lives in `data/providers.py`. `data/history.py` contains the synthetic provider, dated history selection and the minute-addressable, as-of `MinuteHistoryProvider` (one instance answers for one elapsed-minute/decision-cutoff; it is not yet composed across a session's multiple elapsed minutes). `strategies/history.py` turns that history into scanner candidates. This is an explicit place to add a future audited provider; it is not an Alpaca adapter or a new historical-data capability.
 
 ## Public compatibility
 

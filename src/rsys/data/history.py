@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from rsys.data.models import HistorySession, SyntheticSymbolHistory
+from rsys.data.calendar import is_trading_day, session_duration_minutes
+from rsys.data.errors import CalendarCoverageError
+from rsys.data.models import (
+    HistorySession,
+    MinuteObservation,
+    MinuteSymbolHistory,
+    ObservationStatus,
+    PreviousSessionObservation,
+    SelectedSession,
+    SyntheticSymbolHistory,
+    UnitBasis,
+)
 
 
 class FixtureHistoryProvider:
@@ -51,3 +62,291 @@ def prior_sessions(
     if len({s.session_date for s in prior}) != len(prior):
         raise ValueError("duplicate scanner history session date")
     return sorted(prior, key=lambda s: s.session_date, reverse=True)
+
+
+# Minute-addressable, as-of scanner history (Step 1 of
+# docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md). These functions rebuild the same coarse
+# `HistorySession` rows `FixtureHistoryProvider` already supplies hand-calculated, but derive
+# them from declared minute-level revisions visible by an explicit decision cutoff instead of
+# a caller-precomputed total. They extend this module's existing dated-selection boundary;
+# `features.compute_cumulative_rvol`/`compute_session_gain`/`compute_dollar_volume_eligible`
+# are unchanged and still own the RVOL/gain/eligibility math itself.
+
+MISSING_MINUTE = "MISSING_MINUTE"
+UNSUPPORTED_UNIT_BASIS = "UNSUPPORTED_UNIT_BASIS"
+
+
+def candidate_prior_session_dates(
+    decision_date: date, *, max_lookback_calendar_sessions: int = 252
+) -> list[date]:
+    """Prior trading-session dates selected strictly from the declared calendar
+    (`calendar.is_trading_day`), newest-first -- never from whatever dates happen to appear
+    in a provider's observations (docs/data_rules.md: "select sessions by the dated exchange
+    calendar before inspecting price/volume values"). Stops at the calendar's declared
+    coverage boundary instead of raising past it: running out of covered calendar is
+    insufficient history, not an error.
+    """
+    if max_lookback_calendar_sessions < 1:
+        raise ValueError("max_lookback_calendar_sessions must be a positive integer")
+    dates: list[date] = []
+    cursor = decision_date
+    while len(dates) < max_lookback_calendar_sessions:
+        cursor = cursor - timedelta(days=1)
+        try:
+            trading = is_trading_day(cursor)
+        except CalendarCoverageError:
+            break
+        if trading:
+            dates.append(cursor)
+    return dates
+
+
+def _select_minute(
+    candidates: list[MinuteObservation], *, feed: str, as_of: datetime
+) -> tuple[MinuteObservation | None, str | None]:
+    """The highest-revision observation visible by `as_of` under `feed`, or `(None,
+    MISSING_MINUTE)` if nothing is visible yet -- a delayed first publication and an
+    as-yet-invisible later revision are both just "not visible", never backfilled with an
+    older revision. Raises for a genuinely ambiguous input: two distinct observations
+    claiming the same highest revision with different payloads."""
+    visible = [o for o in candidates if o.feed == feed and o.available_at <= as_of]
+    if not visible:
+        return None, MISSING_MINUTE
+    max_revision = max(o.revision for o in visible)
+    top = [o for o in visible if o.revision == max_revision]
+    first = top[0]
+    for other in top[1:]:
+        if (other.status, other.unit_basis, other.close, other.volume) != (
+            first.status,
+            first.unit_basis,
+            first.close,
+            first.volume,
+        ):
+            raise ValueError(
+                "ambiguous minute revision for "
+                f"{first.instrument_id} {first.session_date.isoformat()} "
+                f"minute {first.minute_index} revision {max_revision}"
+            )
+    if first.status == ObservationStatus.NO_TRADE and (
+        first.volume != 0 or first.close is not None
+    ):
+        raise ValueError("a verified NO_TRADE minute must have zero volume and no close")
+    if first.unit_basis != UnitBasis.RAW:
+        return first, UNSUPPORTED_UNIT_BASIS
+    return first, None
+
+
+def _build_session(
+    observations: list[MinuteObservation],
+    *,
+    symbol: str,
+    feed: str,
+    session_date: date,
+    required_minutes: int,
+    scheduled_duration_minutes: int,
+    as_of: datetime,
+) -> SelectedSession:
+    by_minute: dict[int, list[MinuteObservation]] = {}
+    for observation in observations:
+        if observation.instrument_id == symbol and observation.session_date == session_date:
+            by_minute.setdefault(observation.minute_index, []).append(observation)
+
+    selected: list[MinuteObservation] = []
+    exclusion_reason: str | None = None
+    volume_total = Decimal(0)
+    for minute_index in range(required_minutes):
+        chosen, reason = _select_minute(
+            by_minute.get(minute_index, []), feed=feed, as_of=as_of
+        )
+        if chosen is not None:
+            selected.append(chosen)
+        if reason is not None:
+            exclusion_reason = reason
+            break
+        volume_total += chosen.volume
+
+    coverage_complete = exclusion_reason is None
+    history_session = HistorySession(
+        session_date=session_date,
+        duration_minutes=scheduled_duration_minutes,
+        cumulative_volume=volume_total if coverage_complete else None,
+        coverage_complete=coverage_complete,
+    )
+    return SelectedSession(
+        history_session=history_session,
+        selected_revisions=tuple(selected),
+        exclusion_reason=exclusion_reason,
+    )
+
+
+def build_minute_history_sessions(
+    observations: list[MinuteObservation],
+    *,
+    symbol: str,
+    feed: str,
+    decision_date: date,
+    elapsed_minutes: int,
+    as_of: datetime,
+    max_lookback_calendar_sessions: int = 252,
+) -> list[SelectedSession]:
+    """Newest-first prior-session builds, each a `HistorySession` rebuilt from
+    minute-addressable observations as of `as_of` -- feed `[b.history_session for b in ...]`
+    straight into `features.compute_cumulative_rvol`'s `history_newest_first`. Which calendar
+    dates to even attempt is decided by the declared calendar
+    (`candidate_prior_session_dates`), never by whichever dates a provider happens to supply.
+    A session shorter than `elapsed_minutes` (an early close) is still returned with its real
+    scheduled duration so `compute_cumulative_rvol`'s own duration filter excludes it; only
+    its own full (shorter) duration is checked for coverage, since a value beyond its own
+    close does not exist to be missing or available."""
+    dates = candidate_prior_session_dates(
+        decision_date, max_lookback_calendar_sessions=max_lookback_calendar_sessions
+    )
+    builds = []
+    for session_date in dates:
+        duration = session_duration_minutes(session_date)
+        required = min(elapsed_minutes, duration)
+        builds.append(
+            _build_session(
+                observations,
+                symbol=symbol,
+                feed=feed,
+                session_date=session_date,
+                required_minutes=required,
+                scheduled_duration_minutes=duration,
+                as_of=as_of,
+            )
+        )
+    return builds
+
+
+def build_previous_session_observation(
+    observations: list[MinuteObservation],
+    *,
+    symbol: str,
+    feed: str,
+    decision_date: date,
+    as_of: datetime,
+) -> PreviousSessionObservation:
+    """The immediately prior trading session's full-session close/volume -- the previous raw
+    close used for session gain and the previous full-session volume/close used for prior-day
+    dollar-volume eligibility (docs/data_rules.md); never the RVOL lookback's same-elapsed-
+    minute slice, which `build_minute_history_sessions` computes separately."""
+    dates = candidate_prior_session_dates(decision_date, max_lookback_calendar_sessions=1)
+    if not dates:
+        return PreviousSessionObservation(None, None, None, (), MISSING_MINUTE)
+    session_date = dates[0]
+    duration = session_duration_minutes(session_date)
+    build = _build_session(
+        observations,
+        symbol=symbol,
+        feed=feed,
+        session_date=session_date,
+        required_minutes=duration,
+        scheduled_duration_minutes=duration,
+        as_of=as_of,
+    )
+    if build.exclusion_reason is not None:
+        return PreviousSessionObservation(
+            session_date, None, None, build.selected_revisions, build.exclusion_reason
+        )
+    close = next(
+        (
+            o.close
+            for o in reversed(build.selected_revisions)
+            if o.status == ObservationStatus.TRADED
+        ),
+        None,
+    )
+    return PreviousSessionObservation(
+        session_date,
+        close,
+        build.history_session.cumulative_volume,
+        build.selected_revisions,
+        None,
+    )
+
+
+class MinuteHistoryProvider:
+    """A `HistoryProvider` built from minute-addressable `MinuteObservation` revisions, fixed
+    to one decision's `elapsed_minutes`/`as_of`/`feed`. The `HistoryProvider` protocol carries
+    no elapsed-minute parameter, so one instance answers for exactly one elapsed-minute
+    decision -- mirroring how `FixtureHistoryProvider`'s precomputed `HistorySession` rows are
+    already only valid for one implicit elapsed-minute value, just made explicit here.
+    Construct a fresh instance for a different elapsed-minute/cutoff: this never recomputes
+    "as of right now"; it only ever answers from what was visible by its own declared
+    `as_of`, the same as-of discipline `BarVersionStore.as_of` already applies to live bar
+    publications. This remains a declared offline/fixture provider (D12/D13 stay Open); it is
+    not an Alpaca/audited adapter, and composing it across multiple same-session elapsed
+    minutes (as `strategies.history.build_scanner_inputs` does for supplied scores) is a
+    separate, not-yet-connected next step.
+    """
+
+    def __init__(
+        self,
+        history: dict[str, MinuteSymbolHistory],
+        *,
+        feed: str,
+        elapsed_minutes: int,
+        as_of: datetime,
+        max_lookback_calendar_sessions: int = 252,
+    ) -> None:
+        self._history = history
+        self._feed = feed
+        self._elapsed_minutes = elapsed_minutes
+        self._as_of = as_of
+        self._max_lookback_calendar_sessions = max_lookback_calendar_sessions
+        # Retained evidence from the most recent call per symbol: denominator sessions,
+        # selected revisions and exclusion reasons.
+        self._session_builds: dict[str, list[SelectedSession]] = {}
+        self._previous_session_builds: dict[str, PreviousSessionObservation] = {}
+
+    def _observations(self, symbol: str) -> list[MinuteObservation]:
+        record = self._history.get(symbol)
+        return record.observations if record else []
+
+    def sessions_before(self, symbol: str, decision_date: date) -> list[HistorySession]:
+        builds = build_minute_history_sessions(
+            self._observations(symbol),
+            symbol=symbol,
+            feed=self._feed,
+            decision_date=decision_date,
+            elapsed_minutes=self._elapsed_minutes,
+            as_of=self._as_of,
+            max_lookback_calendar_sessions=self._max_lookback_calendar_sessions,
+        )
+        self._session_builds[symbol] = builds
+        return [b.history_session for b in builds]
+
+    def previous_session_close(self, symbol: str, decision_date: date) -> Decimal | None:
+        return self._previous_session(symbol, decision_date).close
+
+    def prior_session_dollar_volume_inputs(
+        self, symbol: str, decision_date: date
+    ) -> tuple[Decimal, Decimal] | None:
+        build = self._previous_session(symbol, decision_date)
+        if build.volume is None or build.close is None:
+            return None
+        return build.volume, build.close
+
+    def _previous_session(
+        self, symbol: str, decision_date: date
+    ) -> PreviousSessionObservation:
+        build = build_previous_session_observation(
+            self._observations(symbol),
+            symbol=symbol,
+            feed=self._feed,
+            decision_date=decision_date,
+            as_of=self._as_of,
+        )
+        self._previous_session_builds[symbol] = build
+        return build
+
+    def session_builds(self, symbol: str) -> list[SelectedSession]:
+        """Retained evidence: the exact `HistorySession`s, selected minute revisions and
+        exclusion reasons `sessions_before` built for `symbol`'s most recent call."""
+        return list(self._session_builds.get(symbol, []))
+
+    def previous_session_build(self, symbol: str) -> PreviousSessionObservation | None:
+        """Retained evidence for the most recent `previous_session_close`/
+        `prior_session_dollar_volume_inputs` call for `symbol`."""
+        return self._previous_session_builds.get(symbol)
