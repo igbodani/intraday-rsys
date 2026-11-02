@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 
 from rsys.account.models import RiskPolicy
 from rsys.application.errors import RunConfigError
+from rsys.application.history_config import parse_scanner
 from rsys.application.session_config import decimal, fields, integer, ms, validate
 from rsys.data.calendar import session_close_local, session_open_local
 from rsys.data.errors import CalendarCoverageError
@@ -201,7 +202,7 @@ def _trades(spec, day, opening, closing):
             raise RunConfigError("correction tape must be text or null")
 
 
-def validate_batch(config):
+def validate_batch(config, *, allow_historical=False):
     required = {
         "schema_version",
         "evidence_type",
@@ -214,10 +215,28 @@ def validate_batch(config):
         "completion_policy",
         "sessions",
     }
-    fields(config, required | {"top_n"}, required)
+    fields(
+        config,
+        required
+        | {"top_n", "scanner"}
+        | ({"historical_source"} if allow_historical else set()),
+        required,
+    )
+    historical = (
+        allow_historical and config["evidence_type"] == "historical_bar_estimate"
+    )
+    if historical and (
+        config["input_mode"] != "bar"
+        or "historical_source" not in config
+        or config.get("scanner", {}).get("mode") != "minute_history"
+    ):
+        raise RunConfigError(
+            "Historical runs require pinned sources and bar/history mode"
+        )
+    history_mode = parse_scanner(config) is not None
     if type(config["schema_version"]) is not int or config["schema_version"] != 2:
         raise RunConfigError("unsupported sessions schema_version")
-    if config["evidence_type"] != "synthetic_sessions":
+    if config["evidence_type"] != "synthetic_sessions" and not historical:
         raise RunConfigError(
             "only synthetic_sessions evidence is supported; historical/holdout input remains blocked"
         )
@@ -265,7 +284,9 @@ def validate_batch(config):
         raise RunConfigError("sessions must be a nonempty list")
     previous = None
     for session in config["sessions"]:
-        required_session = {"date", "symbols", "scanner_inputs", "flatten_at"}
+        required_session = {"date", "symbols", "flatten_at"}
+        if not history_mode:
+            required_session.add("scanner_inputs")
         fields(session, required_session, required_session)
         try:
             day = date.fromisoformat(session["date"])
@@ -298,7 +319,7 @@ def validate_batch(config):
                 "evidence_type": "synthetic_standalone",
                 "initial_cash": config["initial_cash"],
                 "symbols": symbols,
-                "scanner_inputs": session["scanner_inputs"],
+                "scanner_inputs": session.get("scanner_inputs", {}),
                 "execution": {"flatten_at": flatten},
             }
             if validate(legacy) != session["date"]:
@@ -322,7 +343,7 @@ def validate_batch(config):
                 if "T" in spec.get("session_open", ""):
                     _dated_time(spec["session_open"], day)
                 _trades(spec, day, opening, closing)
-            _scanner(session["scanner_inputs"], symbols, day, opening, closing)
+            _scanner(session.get("scanner_inputs", {}), symbols, day, opening, closing)
         sources = [
             row
             for spec in symbols.values()

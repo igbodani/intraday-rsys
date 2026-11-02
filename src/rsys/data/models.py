@@ -840,6 +840,87 @@ class SyntheticSymbolHistory:
     prior_session_close_for_dollar_volume: Decimal | None
 
 
+class ObservationStatus(StrEnum):
+    """One minute-addressable observation's trade status. Only `TRADED`/`NO_TRADE` ever
+    exist as a `MinuteObservation`; a minute with no observation at all visible by a cutoff
+    is a coverage gap encoded by its absence, never a status value (docs/data_rules.md:
+    "missing bars are not proof of zero trades")."""
+
+    TRADED = "TRADED"
+    NO_TRADE = "NO_TRADE"  # verified: the feed confirms zero trades, not a guess
+
+
+class UnitBasis(StrEnum):
+    """`RAW` is the only basis `data.history`'s minute-addressable loader accepts as a
+    point-in-time feature input (docs/data_rules.md: cache `adjustment=raw`; apply splits
+    explicitly via `features.convert_split_units`). `SPLIT_ADJUSTED` marks a declared,
+    parseable provider-pre-adjusted series that is always excluded, never silently treated
+    as comparable raw history, because its action boundary is unverified (D20)."""
+
+    RAW = "raw"
+    SPLIT_ADJUSTED = "split_adjusted"
+
+
+@dataclass(frozen=True)
+class MinuteObservation:
+    """One revision of one elapsed minute's declared historical coverage for one
+    instrument/session/feed (minute-addressable history, Step 1 of
+    docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
+
+    `available_at` is when this exact revision became knowable -- independent of
+    `session_date`/`minute_index` -- so a decision cutoff before `available_at` must never
+    see it, even though the minute itself is already in the past. `revision` orders
+    corrections for the same minute: the highest revision visible by a cutoff wins, never an
+    earlier one silently "filled back in" once a later correction exists.
+    """
+
+    instrument_id: str
+    feed: str
+    source: str
+    session_date: date
+    minute_index: int  # 0-based elapsed minutes since the session's scheduled open
+    available_at: datetime  # tz-aware UTC
+    revision: int
+    status: ObservationStatus
+    unit_basis: UnitBasis
+    close: Decimal | None  # None for a verified NO_TRADE minute: no trade, no price
+    volume: Decimal
+
+
+@dataclass(frozen=True)
+class MinuteSymbolHistory:
+    """One symbol's declared minute-addressable observations for `MinuteHistoryProvider`,
+    across every session/revision; `data.history` groups and as-of-selects them per session.
+    """
+
+    observations: list[MinuteObservation]
+
+
+@dataclass(frozen=True)
+class SelectedSession:
+    """One candidate prior session's `HistorySession`, rebuilt from minute-addressable
+    observations as of one decision cutoff. Retains the exact revisions actually selected
+    (evidence for later reconstruction) and, when the session could not be used, why."""
+
+    history_session: HistorySession
+    selected_revisions: tuple[MinuteObservation, ...]
+    exclusion_reason: str | None  # None means every required minute was available and usable
+
+
+@dataclass(frozen=True)
+class PreviousSessionObservation:
+    """The most recent prior trading session's full-session close/volume, rebuilt from
+    minute-addressable observations as of one decision cutoff -- used for session-gain's
+    previous close and prior-day dollar-volume eligibility (never the RVOL lookback's
+    same-elapsed-minute slice, which is computed per candidate session instead)."""
+
+    session_date: date | None
+    close: Decimal | None
+    volume: Decimal | None
+    selected_revisions: tuple[MinuteObservation, ...]
+    exclusion_reason: str | None
+
+
 @dataclass(frozen=True)
 class _ObservedBar:
     available_at_ms: int

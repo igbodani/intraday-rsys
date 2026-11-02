@@ -25,6 +25,12 @@ class ScanResult:
     ]  # same order as `ranked`, full rows for evidence
 
 
+@dataclass(frozen=True)
+class HistoryScan:
+    result: ScanResult
+    evidence: dict
+
+
 class OrbState(str, Enum):
     COLLECT_RANGE = "COLLECT_RANGE"
     ARMED = "ARMED"

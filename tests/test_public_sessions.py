@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import pytest
 
 from rsys.account.models import RiskPolicy
 from rsys.account.risk import RiskMonitor
-from rsys.application.batch import SessionBatch
+from rsys.application.batch import SessionBatch, run_batch_cli
 from rsys.application.batch_config import validate_batch
 from rsys.application.errors import RunConfigError
 from rsys.execution.models import ExecutionCosts
@@ -22,6 +23,34 @@ from rsys.research.errors import CompareCliError, ComparisonError
 from rsys.research.storage import RunStorage
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("mode", ["bar", "trade"])
+def test_trace_hash_matches_retained_bytes_under_windows_newlines(tmp_path, monkeypatch, mode):
+    original = Path.write_text
+
+    def windows_write_text(path, data, encoding=None, errors=None, newline=None):
+        return original(path, data, encoding=encoding, errors=errors,
+                        newline="\r\n" if newline is None else newline)
+
+    monkeypatch.setattr(Path, "write_text", windows_write_text)
+    # Prove the platform emulation is active, so this cannot pass by failing to translate.
+    probe = tmp_path / "probe.txt"
+    probe.write_text("line\n", encoding="utf-8")
+    assert probe.read_bytes() == b"line\r\n"
+    cfg = config(mode)
+    _, run_id, trace, manifest_path = run_batch_cli(
+        cfg, json.dumps(cfg).encode("utf-8"), tmp_path / "runs", report=True,
+    )
+    manifest = json.loads(manifest_path.read_bytes())
+    assert b"\n" in trace.read_bytes()
+    assert b"\r\n" not in trace.read_bytes()
+    assert hashlib.sha256(trace.read_bytes()).hexdigest() == manifest["semantic_trace_hash"]
+    assert compare_run_pair(tmp_path / "runs", run_id, run_id)["ending_equity_delta"] == "0.00000"
+    # Fix the writer, not the verifier: actual file tampering must still fail closed.
+    trace.write_bytes(trace.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(CompareCliError, match="trace integrity mismatch"):
+        compare_run_pair(tmp_path / "runs", run_id, run_id)
 
 
 def config(mode="trade"):

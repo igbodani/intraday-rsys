@@ -37,6 +37,7 @@ from rsys.execution.models import (
 from rsys.replay.models import PhaseEvent, ReplayProfile
 from rsys.replay.runtime import ReplayRunner
 from rsys.strategies.interfaces import StrategyLike
+from rsys.strategies.minute_scanner import MinuteHistoryScanner
 from rsys.strategies.models import CandidateInput, CompletedBar
 from rsys.strategies.scanner import rank_candidates
 
@@ -53,6 +54,9 @@ class BarSessionRunner(RiskManagedRunner):
         session_date: str = "2024-11-29",
         risk: RiskMonitor | None = None,
         costs: ExecutionCosts | None = None,
+        history_scanner: MinuteHistoryScanner | None = None,
+        provider: str = "synthetic",
+        feed: str = "fixture",
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -62,6 +66,8 @@ class BarSessionRunner(RiskManagedRunner):
         self.session_date = session_date
         self.risk = risk
         self.costs = costs or ExecutionCosts()
+        self.history_scanner = history_scanner
+        self.provider, self.feed = provider, feed
         self.origin_ns = (
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
             * 1_000_000_000
@@ -108,8 +114,8 @@ class BarSessionRunner(RiskManagedRunner):
                 source = ProviderBarEvent(
                     event_id=identity,
                     instrument_id=symbol,
-                    provider="synthetic",
-                    feed="fixture",
+                    provider=self.provider,
+                    feed=self.feed,
                     event_time_ns=self._ns(bar.bar_start_ms),
                     available_at_ns=self._ns(bar.available_at_ms),
                     event_time_meaning="provider_market_time",
@@ -267,7 +273,7 @@ class BarSessionRunner(RiskManagedRunner):
         }
         if self.risk is not None:
             row["risk"] = self.risk.snapshot()
-        if event.kind == "decision":
+        if event.kind == "decision" and self.history_scanner is None:
             row["scanner_inputs"] = event.payload["scanner"]
         if isinstance(result, DecisionRecord):
             row.update(asdict(result))
@@ -288,9 +294,22 @@ class BarSessionRunner(RiskManagedRunner):
     def _decide(self, event, point):
         context = self.replay.context_after(event.sort_key, intrabar=False)
         self.contexts.append(context)
-        scan = rank_candidates(
-            [CandidateInput(s, *v) for s, v in event.payload["scanner"].items()],
-            top_n=self.top_n,
+        history_scan = (
+            self.history_scanner.evaluate(
+                context,
+                as_of_ns=event.available_at_ns,
+                top_n=self.top_n,
+            )
+            if self.history_scanner is not None
+            else None
+        )
+        scan = (
+            history_scan.result
+            if history_scan is not None
+            else rank_candidates(
+                [CandidateInput(s, *v) for s, v in event.payload["scanner"].items()],
+                top_n=self.top_n,
+            )
         )
         ranks = {s: i for i, s in enumerate(scan.top, 1)}
         proposals = []
@@ -326,6 +345,7 @@ class BarSessionRunner(RiskManagedRunner):
             context.input_references(),
             list(scan.ranked),
             dict(scan.excluded),
+            history_scan.evidence if history_scan is not None else {},
         )
         self.decisions.append(record)
         if proposals:

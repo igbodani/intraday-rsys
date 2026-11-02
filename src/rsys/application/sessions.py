@@ -111,6 +111,8 @@ class SessionCoordinator:
         bars_by_symbol: dict[str, list],
         scanner_inputs: dict[int, dict],
         corrections_by_symbol: dict | None = None,
+        *,
+        history_scanner=None,
     ) -> BarSessionRunner:
         """Run one calendar session. Raises `CalendarCoverageError` for a non-trading day,
         `UnreconciledPositionError` if a position survived from a prior session, and
@@ -156,6 +158,11 @@ class SessionCoordinator:
             session_date=session_date.isoformat(),
             risk=self.risk,
             costs=self.costs,
+            **(
+                {"history_scanner": history_scanner}
+                if history_scanner is not None
+                else {}
+            ),
         )
         self.last_runner = runner
         # A runtime failure may have committed account transitions. Never silently retry

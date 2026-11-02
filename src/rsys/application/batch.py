@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 
 from rsys.account.models import SizingPolicy
@@ -16,6 +17,7 @@ from rsys.account.risk import RiskMonitor
 from rsys.application.batch_config import execution_costs, risk_policy, validate_batch
 from rsys.application.builders import build_bar, build_strategy
 from rsys.application.errors import RunConfigError
+from rsys.application.history_config import build_history_scanner, parse_scanner
 from rsys.application.results import summarize_runner
 from rsys.application.session_config import ms
 from rsys.application.sessions import SessionCoordinator
@@ -32,6 +34,7 @@ from rsys.research.experiments import (
 )
 from rsys.research.multi_session import compute_multi_session_metrics
 from rsys.research.storage import RunStorage, canonical_hash
+from rsys.strategies.minute_scanner import HISTORY_SCANNER_VERSION
 
 
 def _decimal(value):
@@ -50,9 +53,10 @@ def write_json(path, value):
 
 
 class SessionBatch:
-    def __init__(self, config):
-        validate_batch(config)
+    def __init__(self, config, *, allow_historical=False):
+        validate_batch(config, allow_historical=allow_historical)
         self.config = deepcopy(config)
+        self.history = parse_scanner(self.config)
         self.config.setdefault("top_n", 20)
         for session in self.config["sessions"]:
             for symbol, spec in session["symbols"].items():
@@ -99,7 +103,13 @@ class SessionBatch:
                 if self.plans[day.isoformat()]["flatten_at"] is not None
                 else None,
             ),
-            runner_factory=BarSessionRunner
+            runner_factory=partial(
+                BarSessionRunner,
+                provider="alpaca",
+                feed=config["historical_source"]["feed"],
+            )
+            if config.get("evidence_type") == "historical_bar_estimate"
+            else BarSessionRunner
             if config["input_mode"] == "bar"
             else TradeInputRunner,
             risk=self.risk,
@@ -163,12 +173,20 @@ class SessionBatch:
                     )
                     for s, row in rows.items()
                 }
-                for t, rows in plan["scanner_inputs"].items()
+                for t, rows in plan.get("scanner_inputs", {}).items()
             }
             record["status"] = "failed"
             self.coordinator.last_runner = None
             try:
-                runner = self.coordinator.run_session(day, data, scanner, corrections)
+                runner = self.coordinator.run_session(
+                    day,
+                    data,
+                    scanner,
+                    corrections,
+                    history_scanner=build_history_scanner(
+                        self.config, self.history, day, plan["symbols"]
+                    ),
+                )
                 if self.portfolio.positions and (
                     index < len(self.sessions) - 1
                     or self.config["completion_policy"] == "require_flat"
@@ -243,12 +261,18 @@ class SessionBatch:
         }
 
 
-def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
+def run_batch_cli(
+    config, raw, out_dir: Path, *, report: bool, prepare=None, access_log=None
+):
     from rsys.reporting.html import render_report
 
+    if not isinstance(config, dict):
+        config = {"invalid_input": config}
     batch, error = None, None
     try:
-        batch = SessionBatch(config)
+        if prepare is not None:
+            config = prepare(config)
+        batch = SessionBatch(config, allow_historical=prepare is not None)
     except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - re-raised inside the retained run context
         # Even construction/validation interruptions get a retained attempt. Never
         # execute a partially constructed batch or silently drop an invocation.
@@ -262,7 +286,11 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
     try:
         record = start_run(
             storage,
-            hypothesis="Offline synthetic sessions with explicit risk/cost policy.",
+            hypothesis=(
+                "Offline historical bars with modeled timing and explicit risk/cost policy."
+                if config.get("evidence_type") == "historical_bar_estimate"
+                else "Offline synthetic sessions with explicit risk/cost policy."
+            ),
             phase="run",
             resolved_config=batch.config if batch else config,
             data_identity="sha256:" + hashlib.sha256(raw).hexdigest(),
@@ -273,7 +301,8 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
         trace_path, manifest_path = attempt / "trace.jsonl", attempt / "manifest.json"
         manifest = {
             "schema_version": 3,
-            "evidence_type": "synthetic_sessions",
+            "evidence_type": config.get("evidence_type", "unresolved_invalid_config"),
+            "historical_source": redact_secrets(config.get("historical_source")),
             "run_id": record.run_id,
             "status": "failed",
             "metrics_scope": "partial_attempt",
@@ -284,7 +313,17 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
             "dependency_lock_hash": record.dependency_lock_hash,
             "calendar_version": "nyse-2024-v1",
             "account_basis": "synthetic_immediate_settlement",
-            "scanner_basis": "supplied_synthetic_scores",
+            "scanner_basis": "unresolved_invalid_config"
+            if batch is None
+            else (
+                (
+                    "historical_final_bar_features_v1"
+                    if config.get("evidence_type") == "historical_bar_estimate"
+                    else HISTORY_SCANNER_VERSION
+                )
+                if batch.history is not None
+                else "supplied_synthetic_scores"
+            ),
         }
         with run_context(storage, record):
             try:
@@ -292,7 +331,9 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                     raise error
                 manifest.update(
                     {
-                        "execution_basis": "synthetic_bar_open_v3"
+                        "execution_basis": "historical_bar_open_estimate_v1"
+                        if config.get("evidence_type") == "historical_bar_estimate"
+                        else "synthetic_bar_open_v3"
                         if config["input_mode"] == "bar"
                         else "subsequent_trade_estimate_v2",
                         "input_mode": config["input_mode"],
@@ -336,8 +377,19 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                                 for d, p in batch.plans.items()
                             }
                         ),
+                        "scanner_basis": (
+                            "historical_final_bar_features_v1"
+                            if config.get("evidence_type") == "historical_bar_estimate"
+                            else HISTORY_SCANNER_VERSION
+                        )
+                        if batch.history is not None
+                        else "supplied_synthetic_scores",
                         "scanner_hash": canonical_hash(
-                            {d: p["scanner_inputs"] for d, p in batch.plans.items()}
+                            batch.config["scanner"]
+                            if batch.history is not None
+                            else {
+                                d: p["scanner_inputs"] for d, p in batch.plans.items()
+                            }
                         ),
                     }
                 )
@@ -358,19 +410,33 @@ def run_batch_cli(config, raw, out_dir: Path, *, report: bool):
                 }
                 raise
             finally:
+                if access_log is not None:
+                    write_json(attempt / "data_access.json", access_log)
                 summary = batch.summary() if batch else {}
                 manifest.update(summary)
                 rows = batch.trace if batch else []
                 trace_text = "".join(
                     json.dumps(r, sort_keys=True, default=str) + "\n" for r in rows
                 )
-                trace_path.write_text(trace_text, encoding="utf-8")
+                # Hash exactly the canonical bytes written, independent of Windows
+                # text-mode newline translation. The verifier still hashes raw bytes.
+                trace_bytes = trace_text.encode("utf-8")
+                trace_path.write_bytes(trace_bytes)
                 manifest["semantic_trace_hash"] = hashlib.sha256(
-                    trace_text.encode()
+                    trace_bytes
                 ).hexdigest()
                 write_json(attempt / "input.json", redact_secrets(config))
                 write_json(attempt / "resolved_config.json", record.resolved_config)
                 write_json(attempt / "fills.json", summary.get("fills", []))
+                if batch is not None and batch.history is not None:
+                    write_json(
+                        attempt / "scanner_history.json",
+                        {
+                            identity: snapshot
+                            for runner in batch.runners
+                            for identity, snapshot in runner.history_scanner.snapshots.items()
+                        },
+                    )
                 write_json(
                     attempt / "metrics.json",
                     {

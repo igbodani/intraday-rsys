@@ -228,6 +228,37 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def _cmd_data(args):
+    from rsys.application.historical import (
+        backtest,
+        download,
+        load_request,
+        retain_input_failure,
+    )
+
+    try:
+        try:
+            config, raw = load_request(args.config)
+        except Exception as exc:
+            retain_input_failure(args.config, args.out, args.command, exc)
+            raise
+        if args.command == "download":
+            result, manifest = download(config, args.out, refresh=args.refresh)
+            print(f"ok: {len(result['datasets'])} cached session(s)")
+            print(f"manifest: {manifest}")
+        else:
+            summary, run_id, trace, manifest = backtest(
+                config, raw, args.out, report=args.report
+            )
+            print(f"ok: {len(summary['fills'])} simulated fill(s)")
+            print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
+        return EXIT_SUCCESS
+    except Exception as exc:  # noqa: BLE001 -- retained provider/loader failures
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        _print_attempt_paths(exc)
+        return EXIT_DATA_ERROR
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rsys")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -297,6 +328,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", required=True, help="Output directory for comparison.json"
     )
     compare.set_defaults(func=_cmd_compare)
+
+    download = subparsers.add_parser(
+        "download", help="Download Alpaca minute bars into a versioned local cache"
+    )
+    download.add_argument("--config", required=True)
+    download.add_argument(
+        "--out", required=True, help="Retained download attempt directory"
+    )
+    download.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Save a new snapshot; preserve old objects",
+    )
+    download.set_defaults(func=_cmd_data)
+    backtest = subparsers.add_parser(
+        "backtest", help="Run an offline backtest from pinned cached historical bars"
+    )
+    backtest.add_argument("--config", required=True)
+    backtest.add_argument("--out", required=True)
+    backtest.add_argument("--report", action="store_true")
+    backtest.set_defaults(func=_cmd_data)
 
     for name in _NOT_IMPLEMENTED:
         stub = subparsers.add_parser(

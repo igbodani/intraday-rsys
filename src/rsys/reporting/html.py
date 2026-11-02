@@ -79,7 +79,34 @@ def _fills_table(records: list[dict[str, Any]]) -> str:
     return f"<table><caption>Fills ({len(fills)})</caption><thead>{header}</thead><tbody>{rows}</tbody></table>"
 
 
+def _scanner_details(records: list[dict[str, Any]]) -> str:
+    rows = [
+        r for r in records if r.get("kind") == "decision" and r.get("scanner_evidence")
+    ]
+    if not rows:
+        return ""
+    return (
+        "<h2>History scanner decisions</h2><p>Exact history revisions are retained in scanner_history.json; snapshot IDs below identify them.</p>"
+        + "".join(
+            f"<details><summary>{_esc(r.get('session_date', ''))} / {_esc(r['available_at_ms'])}</summary>"
+            f"<pre>{_esc(json.dumps(r['scanner_evidence'], indent=2, default=str))}</pre></details>"
+            for r in rows
+        )
+    )
+
+
 def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> str:
+    historical = manifest.get("evidence_type") == "historical_bar_estimate"
+    title = (
+        "Historical bars — simulated account"
+        if historical
+        else "Synthetic account execution"
+    )
+    warning = (
+        "Final historical bars with modeled timing; not recorded arrivals or real fills. Unscored research evidence"
+        if historical
+        else "Synthetic, offline evidence; not a market-performance claim"
+    )
     metrics = manifest.get("metrics", {})
     trade_count = metrics.get("completed_trade_count", 0)
     status_label = (
@@ -107,6 +134,7 @@ def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> st
         )
     details = ""
     for key in (
+        "historical_source",
         "error",
         "risk",
         "costs",
@@ -130,18 +158,20 @@ th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left; }}
 </style>
 </head>
 <body>
-<h1>Synthetic account execution — run {_esc(manifest["run_id"])}</h1>
-<p><em>Synthetic, offline evidence; not a market-performance claim. Status: {_esc(status_label)}.</em></p>
+<h1>{_esc(title)} — run {_esc(manifest["run_id"])}</h1>
+<p><em>{_esc(warning)}. Status: {_esc(status_label)}.</em></p>
 <p class="summary">
 <span>Universe: {_esc(manifest.get("universe"))}</span>
 <span>Starting equity: {_esc(manifest.get("starting_equity", "unavailable"))}</span>
 <span>Ending equity: {_esc(manifest.get("ending_equity", "unavailable"))}</span>
 </p>
 <p>Metrics scope: {_esc(manifest.get("metrics_scope", "complete_attempt"))}. Multi-session drawdown uses session-end equity; exposure uses scheduled regular hours. Neither establishes complete market-data coverage.</p>
+<p>Scanner basis: {_esc(manifest.get("scanner_basis", "unavailable"))}.</p>
 {_metrics_table(metrics)}
 {sessions_table}
 {_decisions_table(records)}
 {_fills_table(records)}
+{_scanner_details(records)}
 {details}
 </body>
 </html>

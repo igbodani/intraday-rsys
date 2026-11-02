@@ -9,13 +9,13 @@ All packages are under `src/rsys/`. Every package has `models.py`. Plain datacla
 | Package | Behavior modules | Models owned here |
 |---|---|---|
 | `cli` | `commands.py`, `fixtures.py`, `__main__.py` | `FixtureCaseOutcome`; argument parsing continues to use `argparse.Namespace` |
-| `application` | `builders.py`, `run.py`, `batch.py`, `sessions.py`, `results.py`, `config.py`, `session_config.py`, `batch_config.py`, `registry.py`, `replay.py` | Configuration profiles, registry specifications, validation results, `SessionResult`, `SplitAction`, `ReplayRunResult` |
-| `data` | `calendar.py`, `timestamps.py`, `bars.py`, `bar_builder.py`, `bar_version_store.py`, `bar_rules.py`, `quotes.py`, `actions.py`, `features.py`, `history.py`, `providers.py`, `parity.py` | Events, bars, snapshots/versions, keys, quotes, coverage/universe records, historical rows and feature results |
+| `application` | `builders.py`, `run.py`, `batch.py`, `sessions.py`, `results.py`, `config.py`, `session_config.py`, `batch_config.py`, `history_config.py`, `historical.py`, `dataset_policy.py`, `registry.py`, `replay.py` | Configuration profiles, registry specifications, validation results, `SessionResult`, `SplitAction`, `ReplayRunResult` |
+| `data` | `calendar.py`, `timestamps.py`, `bars.py`, `bar_builder.py`, `bar_version_store.py`, `bar_rules.py`, `quotes.py`, `actions.py`, `features.py`, `history.py`, `alpaca.py`, `bar_cache.py`, `providers.py`, `parity.py` | Events, bars, snapshots/versions, keys, quotes, coverage/universe records, historical rows and feature results |
 | `replay` | `clock.py`, `engine.py`, `runtime.py`, `views.py`, `validation.py` | `Phase`, `ReplayProfile`, `PhaseEvent`, dispatch/observation records |
-| `strategies` | `orb.py`, `vwap.py`, `scanner.py`, `history.py`, `interfaces.py` | Shared `CompletedBar`, ORB/VWAP configuration and states, scanner candidates/results |
+| `strategies` | `orb.py`, `vwap.py`, `scanner.py`, `history.py`, `minute_scanner.py`, `interfaces.py` | Shared `CompletedBar`, ORB/VWAP configuration and states, scanner candidates/results, `HistoryScan` |
 | `execution` | `bar.py`, `trade.py`, `trade_adapter.py`, `contracts.py`, `fixtures.py` | Fill transitions/records/outcomes, trade references, execution policy/costs, decisions and fixture results |
 | `account` | `portfolio.py`, `acceptance.py`, `sizing.py`, `risk.py`, `money.py` | Proposals, accepted intents, positions, checkpoints, risk/sizing policies and rejection codes |
-| `research` | `experiments.py`, `storage.py`, `evaluation.py`, `multi_session.py`, `comparison.py`, `holdout.py` | Run records/status, metrics, comparison assumptions, partition/access records |
+| `research` | `experiments.py`, `storage.py`, `evaluation.py`, `multi_session.py`, `comparison.py`, `holdout.py` | Run records/status, metrics, comparison assumptions, partition/access records, `DatePartition` |
 | `reporting` | `html.py` | No additional report-only records yet; `models.py` documents reuse of research records and retained JSON |
 
 `Portfolio` deliberately remains in `account/portfolio.py`: although implemented as a dataclass, it is a mutable transactional account aggregate with reservation, buy/sell and invariant behavior, not a plain model. `RiskMonitor`, replay engines, runners and strategy state machines likewise remain services.
@@ -40,7 +40,7 @@ flowchart TD
 
 Core data/account/replay/strategy/execution packages do not import CLI or application orchestration. Model modules may depend on other model/error modules and small validation/time/money utilities, never runners or storage services. `application/builders.py` constructs strategies and runners; batches no longer import construction helpers from a CLI/run module. `application/results.py` summarizes a session without invoking another run.
 
-The history provider contract lives in `data/providers.py`. `data/history.py` contains the synthetic provider and dated history selection. `strategies/history.py` turns that history into scanner candidates. This is an explicit place to add a future audited provider; it is not an Alpaca adapter or a new historical-data capability.
+The history provider contract lives in `data/providers.py`. `data/history.py` contains fixture providers and dated/as-of minute selection. `strategies/history.py` retains the legacy precomputed helper. The public `strategies/minute_scanner.py` service creates a fresh `MinuteHistoryProvider` at each decision's elapsed minute/cutoff, uses bounded replay bars, and retains feature/ranking provenance. `application/history_config.py` validates the explicit synthetic configuration; `batch.py` connects it to both runners and seals deduplicated snapshots in `scanner_history.json`. See [HISTORY_SCANNER_INTEGRATION.md](HISTORY_SCANNER_INTEGRATION.md). No Alpaca adapter or audited market history is implied.
 
 ## Public compatibility
 
@@ -109,3 +109,5 @@ uv run rsys run --config fixtures/sessions_trade_fixture.json --out runs/trade -
 ```
 
 Verified: **763 tests pass**, Ruff is clean, and all **25 public CLI invocations** return their expected exits. All **18 generated semantic traces** match revision `dab3185` exactly, with unchanged account metrics. The wheel build includes all nine model namespaces and the public compatibility entry points. Historical inputs, provider semantics, full equal-timestamp trade execution and final-evaluation enablement remain outside this change.
+
+The initial historical boundary is `application/historical.py`: separate acquisition and offline replay commands, before-read date authorization, and explicit final-bar timing/action-review conventions. `data/alpaca.py` handles network requests only during acquisition; `data/bar_cache.py` stores and verifies request-scoped immutable snapshots. See [ALPACA_LOCAL_BACKTEST.md](ALPACA_LOCAL_BACKTEST.md). The adapter is not yet credential-tested or a complete provider coverage audit.
