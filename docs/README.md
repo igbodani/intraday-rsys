@@ -9,5 +9,6 @@ Use these documents in this order:
 5. [decisions.md](decisions.md), [contracts.md](contracts.md), [data_rules.md](data_rules.md), [experiments.md](experiments.md): research authority and behavioral contracts.
 6. [M2_IMPLEMENTATION_STATUS.md](M2_IMPLEMENTATION_STATUS.md): brief milestone status.
 7. [COPILOT_WORKFLOW.md](COPILOT_WORKFLOW.md): selectable roles, reusable skills/prompts, test selection and implementation/review handoffs.
+8. [Backtest-readiness agent plan](agent-workflow/backtest-readiness-plan.md): current ordered to-do, [implementation tickets](agent-workflow/backtest-readiness-tickets.md), [acceptance tests](agent-workflow/backtest-readiness-tests.md) and a Copilot starting prompt. This is a specification pack; its new interfaces are not implemented yet.
 
 Uppercase handoff, repair and earlier plan documents retain historical context. Their initial-state descriptions and old file paths are not the current architecture. Do not treat a past test count as verification of a newer checkout. `AGENTS.md` at the repository root governs implementation work.
