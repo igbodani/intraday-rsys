@@ -43,7 +43,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-The verified suite contains **881 passing tests**, including 30 Alpaca pipeline checks and 37 public-history/calendar integration checks, 11 Copilot-configuration checks, 38 minute-history provider cases and 48 existing public-session cases. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
+The pre-data repair suite contains **937 passing tests**, including 36 Alpaca pipeline cases, 25 historical-comparison cases and 25 trade-condition cases. See [PRE_DATA_VALIDATION.md](docs/PRE_DATA_VALIDATION.md) for the defects, regression controls and remaining provider checks. Replay input paths resolve relative to the config file. `--out auto` uses `<config parent>/../runs/replay/<config stem>`; each invocation creates a fresh attempt under `attempts/<run_id>/`, with its own trace and manifest. An explicit output root may be reused to accumulate attempts without overwriting them. Repeated identical inputs have distinct run IDs and identical semantic trace hashes.
 
 ## Replay limits and configuration migration
 

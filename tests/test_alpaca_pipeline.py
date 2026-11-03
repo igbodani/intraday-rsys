@@ -14,11 +14,71 @@ import pytest
 from rsys.application.batch import SessionBatch
 from rsys.application.historical import backtest, download, prepare_backtest
 from rsys.data.alpaca import AlpacaBarsClient
-from rsys.data.bar_cache import BarCache, request_identity
+from rsys.data.bar_cache import BarCache, normalize_pages, request_identity
 from rsys.data.calendar import session_duration_minutes, session_open_utc
 from rsys.research.comparison import compare_run_pair
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_equivalent_numeric_duplicates_count_once_and_round_trip(tmp_path):
+    request = request_identity("AAPL", date(2024, 11, 27), "sip", "-")
+    row = {"t": request["start"], "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}
+    same = {
+        "t": row["t"],
+        "o": "100.00",
+        "h": "1E+2",
+        "l": 100.0,
+        "c": "100",
+        "v": "1.000",
+    }
+    pages = [{"bars": {"AAPL": [row]}}, {"bars": {"AAPL": [same]}}]
+    bars, quality = normalize_pages(pages, request)
+    assert len(bars) == 1 and Decimal(bars[0]["v"]) == 1
+    assert quality["duplicate_rows"] == 1
+    assert len(quality["missing_minutes"]) == 389
+
+    class Client:
+        def pages(self, params):
+            assert params == request
+            yield from pages
+
+    cache = BarCache(tmp_path)
+    identity = cache.acquire(request, Client())
+    assert cache.load(identity, request)["bars"] == bars
+    same["c"] = "100.01"
+    same["h"] = "100.01"
+    with pytest.raises(ValueError, match="Conflicting duplicate"):
+        normalize_pages(pages, request)
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2024-11-27T14:31:00+00:00:30",
+        "2024-11-27T14:30:00.000000001Z",
+        "2024-11-27T14:30:00.0000000001Z",
+    ],
+)
+def test_subminute_or_unsupported_timestamp_precision_is_never_truncated(timestamp):
+    request = request_identity("AAPL", date(2024, 11, 27), "sip", "-")
+    row = {"t": timestamp, "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}
+    with pytest.raises(ValueError, match="timestamp"):
+        normalize_pages([{"bars": {"AAPL": [row]}}], request)
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2024-11-27T14:30:00Z",
+        "2024-11-27T14:30:00.000000000+00:00",
+    ],
+)
+def test_exact_utc_minute_timestamp_encodings_remain_accepted(timestamp):
+    request = request_identity("AAPL", date(2024, 11, 27), "sip", "-")
+    row = {"t": timestamp, "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}
+    bars, _ = normalize_pages([{"bars": {"AAPL": [row]}}], request)
+    assert bars[0]["t"] == request["start"]
 
 
 def inputs(tmp_path):

@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+HISTORICAL_SCANNER_PROFILE_VERSION = "historical_scanner_settings_v1"
+
 
 @dataclass(frozen=True)
 class SyntheticRunAssumptions:

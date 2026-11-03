@@ -41,6 +41,7 @@ Each symbol specifies `strategy` (`orb_close_cross_v1` or `vwap_touch_hold_v1`),
 
 - Bar symbols provide the existing dated one-minute `bars` schema: `bar_start`, `bar_end`, `available_at`, OHLC and volume. VWAP begins at the session open.
 - Trade symbols provide `trades`, with required `trade_id`, dated `event_time` and `available_at`, positive `price`/`size`, and boolean `quality_ok`. Optional `conditions` and `tape` are preserved. Only declared fixture condition codes are accepted. Distinct equal-market-time prints remain explicitly unsupported by this millisecond account adapter; a real-provider full-key adapter is later work.
+- Fixture price eligibility applies to the account as well as bars. `VOLUME_ONLY` contributes volume/count but cannot mark a position or fill an entry, protective exit or timer exit. `LATE_REPORT` may update an eligible close mark, but cannot represent a fresh fill. Only ordinary prints (`ALL` or no conditions) can fill; restrictive combinations remain restricted and unknown codes fail. These are fixture rules, not verified Alpaca trade-condition semantics.
 - Optional trade `corrections` specify `original_trade_id`, dated `available_at`, `action` (`cancel` or `correct`), and replacement price/size for `correct`. Replacements affect future observations; they cannot rewrite committed fills or masquerade as fresh execution opportunities.
 
 ## Risk semantics

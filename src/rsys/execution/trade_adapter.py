@@ -18,6 +18,8 @@ from decimal import Decimal
 
 from rsys.account.models import AcceptedIntent, Position
 from rsys.account.money import amount
+from rsys.data.bar_rules import FixtureBarRuleSet
+from rsys.data.models import TradeClassificationContext
 from rsys.execution.models import FillOutcome, Trade
 
 ENTRY_ADAPTER_ID = "subsequent_trade_estimate_v1"
@@ -26,10 +28,24 @@ REJECTED_STALE = "REJECTED_STALE"
 REJECTED_SELF_CONSUMED = "REJECTED_SELF_CONSUMED"
 REJECTED_NOT_READY = "REJECTED_NOT_READY"
 REJECTED_BAD_QUALITY = "REJECTED_BAD_QUALITY"
+REJECTED_CONDITION = "REJECTED_CONDITION"
 REJECTED_ENTRY_THROUGH_STOP = "REJECTED_ENTRY_THROUGH_STOP"
 ALREADY_FILLED = "ALREADY_FILLED"
 FILLED = "FILLED"
 SKIPPED = "SKIPPED"
+
+
+def _fixture_execution_eligible(trade: Trade) -> bool:
+    """Only ordinary fixture prints represent fresh executable prices.
+
+    Validate all codes (including combinations) through the declared fixture table.
+    VOLUME_ONLY has no eligible price; LATE_REPORT can update a bar's close but is
+    not a fresh execution reference. This is not an Alpaca condition-code mapping.
+    """
+    FixtureBarRuleSet().classify(
+        TradeClassificationContext(trade.conditions, trade.tape)
+    )
+    return all(condition == "ALL" for condition in trade.conditions)
 
 
 class TradeExecutionAdapter:
@@ -72,6 +88,8 @@ class TradeExecutionAdapter:
             )
         if not trade.quality_ok:
             return FillOutcome(REJECTED_BAD_QUALITY, trade_id=trade.trade_id)
+        if not _fixture_execution_eligible(trade):
+            return FillOutcome(REJECTED_CONDITION, trade_id=trade.trade_id)
         if trade.trade_id in consumed_trade_ids:
             return FillOutcome(REJECTED_SELF_CONSUMED, trade_id=trade.trade_id)
         if trade.available_at_ms < proposal.ready_at_ms:
@@ -116,6 +134,8 @@ class TradeExecutionAdapter:
             return FillOutcome(REJECTED_STALE, trade_id=trade.trade_id)
         if not trade.quality_ok:
             return FillOutcome(REJECTED_BAD_QUALITY, trade_id=trade.trade_id)
+        if not _fixture_execution_eligible(trade):
+            return FillOutcome(REJECTED_CONDITION, trade_id=trade.trade_id)
         if trade.trade_id == self.entry_trade_id:
             return FillOutcome(
                 REJECTED_SELF_CONSUMED,

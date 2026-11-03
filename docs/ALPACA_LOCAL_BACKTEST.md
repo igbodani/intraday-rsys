@@ -19,6 +19,8 @@ uv run rsys download --config configs/my_download.json --out runs/acquisition
 uv run rsys download --config configs/my_download.json --out runs/acquisition --refresh
 uv run rsys backtest --config configs/my_backtest.json --out runs/historical --report
 uv run rsys compare --storage-root runs/historical --runs ID_A ID_B --out runs/comparison
+# For a declared entry/exit setting change, with other assumptions held equal:
+uv run rsys compare --storage-root runs/historical --runs ID_A ID_B --permitted-difference strategies --out runs/strategy-comparison
 ```
 
 Cache paths resolve relative to the JSON config. `/data/`, `/runs/` and `.env` are ignored by Git. Keep dataset snapshots outside the source repository and back them up. JSON is the initial transparent storage format; a columnar adapter can be added behind the cache contract later.
@@ -28,7 +30,7 @@ Cache paths resolve relative to the JSON config. `/data/`, `/runs/` and `.env` a
 - Downloads paginate until `next_page_token` is absent, including pages with no requested-symbol rows. A repeated token fails. Explicit bounded retries apply to 429, selected server errors and transport outages; 401/403 fail immediately. No alternate feed is silently substituted.
 - Every request pins symbol, date, feed, raw adjustment, mapping policy, interval and ordering. Objects are stored under a request-specific directory and addressed by a SHA-256 of their exact canonical bytes. The current-request index changes on refresh; previously pinned objects remain. Files publish by atomic rename, and failed pagination does not publish a partial day.
 - Stored objects contain source pages, retrieval time, normalized bars, missing-minute inventory and calendar/timing versions. Reads validate hashes, schema/provider/timing identity and recomputed OHLC/coverage. Symlink aliases and cross-request lookups are refused. This establishes integrity relative to collected input, not cryptographic proof of the vendor's response.
-- Negative/nonfinite values, bad OHLC, non-minute/naive timestamps, wrong symbols, out-of-request bars and conflicting duplicate bars fail. Exact duplicate bars count once and remain disclosed. Missing minutes remain missing; a missing Alpaca bar is never synthesized as a verified no-trade minute.
+- Negative/nonfinite values, bad OHLC, non-minute/non-UTC timestamps, wrong symbols, out-of-request bars and conflicting duplicate bars fail. Timestamp validation preserves nanoseconds before checking exact minute alignment; sub-microsecond values are never rounded into a valid minute. Numerically equal duplicate bars (including `100` versus `100.0`) count once and remain disclosed in the source pages. Missing minutes remain missing; a missing Alpaca bar is never synthesized as a verified no-trade minute.
 - Execution dates currently require every scheduled regular-session minute. Sparse IEX data may fail this strict requirement. Warmup gaps make the scanner's history unavailable and can yield a valid zero-trade result; calendar selection never fills a missing selected day with an older available one.
 - Historical results are labeled `historical_bar_estimate`, `historical_final_bar_features_v1`, and unscored. Alpaca final historical bars do **not** reconstruct original publication/revision history. Current bars use modeled availability at interval end plus the explicit feed delay. Previous-day bars use the same timing model. Internal replay remains bounded, but future vendor corrections may already be embedded in a downloaded historical snapshot; this limitation cannot be eliminated by the simulator.
 - Execution remains modeled bar-open/OHLC execution with explicit costs and the synthetic immediate-settlement account. It is not a real fill record or precise intrabar touch simulation. Raw-unit runs require the declared action-free window; no split-adjusted data is silently mixed into execution.
@@ -38,6 +40,10 @@ Cache paths resolve relative to the JSON config. `/data/`, `/runs/` and `.env` a
 Each download invocation retains `downloads/<id>/manifest.json`: redacted request, allowed/denied date log, successful session objects, coverage and any failure. Retrying after a failed later session reuses the earlier completed downloads. An interrupted download retains its status and does not overwrite pinned objects.
 
 Backtests use the existing SQLite run lifecycle and sealed version-3 artifacts: complete expanded bars/history, original backtest request, pinned dataset hashes, source/feed/timing and action review, `data_access.json`, scanner revisions, decisions, fills, metrics, session files and optional HTML report. Configuration/loading errors, including unreadable or malformed JSON, retain failed attempts. Unparseable raw bytes are not copied into reports; their hash is retained when readable. Comparison includes historical source/policy identity and refuses altered evidence. `final-evaluate` remains blocked.
+
+Each declared setting belongs to one comparison axis. The retained original request is not counted a second time as a source change. `strategies` covers entry/exit configuration; `scanner_profile` covers scanner controls; `risk_profile`, `cost_profile`, `initial_cash` and `execution_mode` cover the corresponding account settings. The full original request remains in the artifacts. Source/feed, pinned objects, timing model, partitions, access logs, corporate-action review and unclassified metadata remain protected. A permitted strategy change does not allow a simultaneous cost or data change.
+
+New historical manifests retain both the full `scanner_hash` (including generated history) and `scanner_profile_version: historical_scanner_settings_v1` with a settings-only hash. This prevents a feed-delay experiment from being misclassified as a second scanner experiment merely because modeled history availability changed. Old manifests retain conservative full-scanner-hash comparison; unknown/incomplete profile versions fail. Increasing the lookback search budget can require different pinned objects and is still a data-identity change. Comparisons across source-code revisions remain blocked unless explicitly declared; rerun both experiment arms on the repaired version.
 
 ## Implementation map and checks
 
@@ -59,7 +65,7 @@ uv run pytest tests/ -q
 uv run ruff check .
 ```
 
-Verified on the final implementation diff: **881 tests passed**, including 30 new acquisition/cache/offline-backtest cases; **Ruff clean**. Independent review reran 12 failure/security-boundary regressions successfully. The pinned-future-data test compares the entire earlier trace and proves a past zero-volume change removes the earlier fill.
+The original acquisition implementation passed **881 tests**, including 30 acquisition/cache/offline-backtest cases, with clean Ruff. The subsequent pre-data audit, fixes and current verification are recorded in [PRE_DATA_VALIDATION.md](PRE_DATA_VALIDATION.md). The pinned-future-data test compares the entire earlier trace and proves a past zero-volume change removes the earlier fill.
 
 Independent review found credential-error leakage and pre-lifecycle input failures; both received fixes and regression tests. Cache schema/provider/timing validation was also added following review.
 
