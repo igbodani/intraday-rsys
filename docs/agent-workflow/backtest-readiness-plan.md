@@ -32,8 +32,8 @@ Mark a box only after its acceptance tests and required review pass. A skipped l
 
 | Done | Ticket | Deliverable | Lead / reviewer | Depends on |
 |---|---|---|---|---|
-| [ ] | BR-00 | Reproduced baseline and recorded lifecycle/trace design | Architect + engineer / adversarial reviewer | Current checkout |
-| [ ] | BR-01 | Safe append-only operational journal and early invocation record | Python engineer / adversarial reviewer | BR-00 |
+| [x] | BR-00 | Reproduced baseline and recorded lifecycle/trace design | Architect + engineer / adversarial reviewer | Current checkout |
+| [x] | BR-01 | Safe append-only operational journal and early invocation record | Python engineer / adversarial reviewer | BR-00 |
 | [ ] | BR-02 | Streaming semantic trace and interrupted-run evidence | Python engineer / adversarial reviewer | BR-01 |
 | [ ] | BR-03 | Progress, status, recovery and useful failure/no-trade explanations | Python engineer / adversarial reviewer | BR-02 |
 | [ ] | BR-04 | Offline pinned-data preflight and resource inventory | Python engineer / quant researcher + reviewer | BR-01; integrate with BR-03 |

@@ -51,3 +51,11 @@ class TerminalOutcomeConflictError(IllegalTransitionError):
     """A second finalizer tried to record a different terminal outcome for an already-sealed run.
     Distinct from a generic IllegalTransitionError so callers can tell "someone else finished
     this run first" apart from an actually-illegal lifecycle request."""
+
+
+class DiagnosticWriteError(Exception):
+    """Required invocation/journal evidence could not be durably written.
+
+    Raised instead of silently proceeding: a command whose own operational evidence
+    cannot be saved must fail loudly (BR-01), never report success with missing
+    evidence."""

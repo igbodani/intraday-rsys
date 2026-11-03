@@ -17,7 +17,14 @@ from rsys.data.alpaca import AlpacaBarsClient
 from rsys.data.bar_cache import BarCache, request_identity
 from rsys.data.calendar import EXCHANGE_TZ, is_trading_day
 from rsys.data.history import candidate_prior_session_dates
+from rsys.research.diagnostics import (
+    DiagnosticWriter,
+    protect_evidence_write,
+    start_invocation,
+)
+from rsys.research.errors import DiagnosticWriteError
 from rsys.research.experiments import redact_secrets
+from rsys.research.models import DiagnosticEventCode
 
 
 def _source(config):
@@ -26,10 +33,20 @@ def _source(config):
     return spec
 
 
-def download(config, out_dir, *, client=None, refresh=False, input_error=None):
+def download(
+    config,
+    out_dir,
+    *,
+    client=None,
+    refresh=False,
+    input_error=None,
+    invocation: DiagnosticWriter | None = None,
+):
     out_dir = Path(out_dir)
+    owns_invocation = invocation is None
+    if invocation is None:
+        invocation = start_invocation(out_dir, command="download")
     attempt = out_dir / "downloads" / uuid4().hex
-    attempt.mkdir(parents=True, exist_ok=False)
     report = {
         "status": "failed",
         "input": redact_secrets(config),
@@ -37,6 +54,10 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
         "access_log": [],
     }
     try:
+        # A collision/permission failure here must still leave a FAILURE event and
+        # a retained manifest, never an invocation with no record of what happened.
+        attempt.mkdir(parents=True, exist_ok=False)
+        invocation.link_download_attempt(str(attempt / "manifest.json"))
         if input_error is not None:
             raise RunConfigError(input_error)
         required = {
@@ -64,7 +85,16 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
         for offset in range((end - start).days + 1):
             day = start + timedelta(days=offset)
             if is_trading_day(day):
-                policy.check(day)
+                try:
+                    policy.check(day)
+                except ValueError:
+                    invocation.event(
+                        DiagnosticEventCode.DATA_ACCESS_DENIED,
+                        invocation.stage,
+                        details={"date": day.isoformat()},
+                        level="error",
+                    )
+                    raise
                 requests.append(
                     (
                         day,
@@ -75,12 +105,25 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
                 )
         if not requests:
             raise ValueError("No trading dates requested")
+        invocation.event(
+            DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+            invocation.stage,
+            details={"permitted_dates": len(requests)},
+        )
         cache = BarCache(config["cache"])
         for day, request in requests:
             identity = cache.acquire(
                 request, client or AlpacaBarsClient(), refresh=refresh
             )
             payload = cache.load(identity, request)
+            invocation.event(
+                DiagnosticEventCode.CACHE_READ,
+                invocation.stage,
+                details={
+                    "date": day.isoformat(),
+                    "coverage_complete": payload["quality"]["coverage_complete"],
+                },
+            )
             report["datasets"].append(
                 {
                     "date": day.isoformat(),
@@ -89,18 +132,58 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
                 }
             )
         report["status"] = "success"
+        invocation.event(
+            DiagnosticEventCode.DATASET_COMPLETE,
+            invocation.stage,
+            details={"dataset_count": len(report["datasets"])},
+        )
         return report, attempt / "manifest.json"
     except BaseException as exc:
         if isinstance(exc, KeyboardInterrupt):
             report["status"] = "interrupted"
         exc.manifest_path = attempt / "manifest.json"
         report["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        # Reflect the invocation's true current stage, not a hardcoded "preparing"
+        # that becomes stale once link_download_attempt() has already resolved it.
+        invocation.fail(exc)
         raise
     finally:
-        write_json(attempt / "manifest.json", report)
+
+        def _finalize_evidence() -> None:
+            # The diagnostics finalize step and the manifest.json write are both
+            # "evidence writing" in T04's sense; a failure in either must never
+            # replace/mask whatever application exception is already propagating
+            # through this `finally` block (attached instead, never raised in its
+            # place).
+            if invocation.stage != "failed":
+                invocation.set_stage("finalizing")
+            # ARTIFACTS_READY must only be journaled once the manifest (the last
+            # required artifact) is actually on disk -- never before, or a
+            # manifest-write failure would leave a journal falsely claiming
+            # readiness for an attempt that was never fully saved.
+            write_json(attempt / "manifest.json", report)
+            invocation.artifacts_ready(stage=invocation.stage)
+
+        try:
+            protect_evidence_write(
+                _finalize_evidence, catch=(DiagnosticWriteError, OSError)
+            )
+        except BaseException as write_exc:
+            # Same guarantee as `batch.py`: a bare write failure here (nothing
+            # already in flight) is the sole primary failure and must be
+            # journaled, never left to silently escape with a journal ending at
+            # ARTIFACTS_READY -- indistinguishable from a true success. This is
+            # the only durable evidence `download()` has (no SQLite run record).
+            # Mirror the main exception handler above so the CLI can still print
+            # the retained attempt's manifest location for this failure shape.
+            write_exc.manifest_path = attempt / "manifest.json"
+            invocation.fail(write_exc)
+            raise
+        if owns_invocation:
+            invocation.close()
 
 
-def prepare_backtest(config, access_log):
+def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
     required = {
         "schema_version",
         "cache",
@@ -142,9 +225,25 @@ def prepare_backtest(config, access_log):
         )
     try:
         for day in sorted(required_days):
-            policy.check(day)
+            try:
+                policy.check(day)
+            except ValueError:
+                if invocation is not None:
+                    invocation.event(
+                        DiagnosticEventCode.DATA_ACCESS_DENIED,
+                        "preparing",
+                        details={"date": day.isoformat()},
+                        level="error",
+                    )
+                raise
     finally:
         access_log.extend(policy.log)
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+            "preparing",
+            details={"checked_dates": len(required_days)},
+        )
     review = config["action_review"]
     fields(
         review,
@@ -174,6 +273,12 @@ def prepare_backtest(config, access_log):
         )
         for day in sorted(required_days)
     }
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.CACHE_READ,
+            "preparing",
+            details={"loaded_dates": len(loaded)},
+        )
     account = config["account"]
     keys = {
         "initial_cash",
@@ -269,24 +374,46 @@ def prepare_backtest(config, access_log):
             "history": {spec["symbol"]: history},
         },
     )
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.DATASET_COMPLETE,
+            "preparing",
+            details={"session_count": len(sessions)},
+        )
     return result
 
 
-def backtest(config, raw, out_dir, *, report=True):
+def backtest(
+    config,
+    raw,
+    out_dir,
+    *,
+    report=True,
+    invocation: DiagnosticWriter | None = None,
+):
+    out_dir = Path(out_dir)
+    owns_invocation = invocation is None
+    if invocation is None:
+        invocation = start_invocation(out_dir, command="backtest")
     access_log = []
 
     # Shared lifecycle retains construction/loader failures and the full original request.
     def prepare(value):
-        return prepare_backtest(value, access_log)
+        return prepare_backtest(value, access_log, invocation)
 
-    return run_batch_cli(
-        config,
-        raw,
-        Path(out_dir),
-        report=report,
-        prepare=prepare,
-        access_log=access_log,
-    )
+    try:
+        return run_batch_cli(
+            config,
+            raw,
+            out_dir,
+            report=report,
+            prepare=prepare,
+            access_log=access_log,
+            invocation=invocation,
+        )
+    finally:
+        if owns_invocation:
+            invocation.close()
 
 
 def load_request(path):
@@ -305,7 +432,7 @@ def load_request(path):
         raise
 
 
-def retain_input_failure(path, out_dir, command, error):
+def retain_input_failure(path, out_dir, command, error, invocation: DiagnosticWriter | None = None):
     config = {
         "input_path": str(path),
         "input_sha256": getattr(error, "input_sha256", None),
@@ -313,11 +440,17 @@ def retain_input_failure(path, out_dir, command, error):
     }
     message = "Unable to load request: " + type(error).__name__
     if command == "download":
-        return download(config, out_dir, input_error=message)
+        return download(config, out_dir, input_error=message, invocation=invocation)
 
     def fail(_config):
         raise RunConfigError(message)
 
     return run_batch_cli(
-        config, b"", Path(out_dir), report=True, prepare=fail, access_log=[]
+        config,
+        b"",
+        Path(out_dir),
+        report=True,
+        prepare=fail,
+        access_log=[],
+        invocation=invocation,
     )

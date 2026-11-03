@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ from rsys.cli.fixtures import run_fixture_cli
 from rsys.data.errors import ReplayInputError
 from rsys.execution.errors import IncompleteSessionError
 from rsys.research.comparison import compare_run_pair
-from rsys.research.errors import CompareCliError, ComparisonError
+from rsys.research.errors import CompareCliError, ComparisonError, DiagnosticWriteError
 
 EXIT_SUCCESS = 0
 EXIT_OTHER_FAILURE = 1
@@ -146,10 +147,19 @@ def _cmd_fixture(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Run one or more synthetic bar/trade sessions; no real provider integration."""
+    from rsys.research.diagnostics import start_invocation
+
     out_dir = Path("runs") / "run" if args.out == "auto" else Path(args.out)
     try:
+        invocation = start_invocation(out_dir, command="run")
+    except DiagnosticWriteError as exc:
+        print(
+            f"error: invocation evidence could not be saved: {exc}", file=sys.stderr
+        )
+        return EXIT_OTHER_FAILURE
+    try:
         summary, run_id, trace_path, manifest_path = run_cli_entry(
-            args.config, out_dir, report=args.report
+            args.config, out_dir, report=args.report, invocation=invocation
         )
     except RunConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -166,6 +176,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
         _print_attempt_paths(exc)
         return EXIT_INVARIANT_FAILURE
+    except DiagnosticWriteError as exc:
+        print(
+            f"error: invocation evidence could not be saved ({exc}); "
+            f"invocation {invocation.invocation_id}",
+            file=sys.stderr,
+        )
+        return EXIT_OTHER_FAILURE
     except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
         print(
             f"error: run failed ({type(exc).__name__}); inspect retained attempt",
@@ -196,6 +213,16 @@ def _print_attempt_paths(exc):
         value = getattr(exc, attribute, None)
         if value is not None:
             print(f"{label}: {value}", file=sys.stderr)
+    # A secondary diagnostics-write failure while recording this primary failure
+    # (BR-01 T04) must still be surfaced, never silently dropped -- but it must
+    # never replace the primary error message/exit code printed above/by the caller.
+    diagnostic_write_error = getattr(exc, "diagnostic_write_error", None)
+    if diagnostic_write_error is not None:
+        print(
+            f"warning: invocation evidence could not be fully saved: "
+            f"{diagnostic_write_error}",
+            file=sys.stderr,
+        )
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
@@ -235,24 +262,50 @@ def _cmd_data(args):
         load_request,
         retain_input_failure,
     )
+    from rsys.research.diagnostics import start_invocation
+
+    out_dir = Path(args.out)
+    try:
+        invocation = start_invocation(out_dir, command=args.command)
+    except DiagnosticWriteError as exc:
+        print(
+            f"error: invocation evidence could not be saved: {exc}", file=sys.stderr
+        )
+        return EXIT_OTHER_FAILURE
 
     try:
         try:
             config, raw = load_request(args.config)
+            invocation.record_identity(
+                input_path=str(args.config),
+                input_sha256=hashlib.sha256(raw).hexdigest(),
+            )
         except Exception as exc:
-            retain_input_failure(args.config, args.out, args.command, exc)
+            invocation.record_identity(input_path=str(args.config))
+            retain_input_failure(
+                args.config, args.out, args.command, exc, invocation=invocation
+            )
             raise
         if args.command == "download":
-            result, manifest = download(config, args.out, refresh=args.refresh)
+            result, manifest = download(
+                config, args.out, refresh=args.refresh, invocation=invocation
+            )
             print(f"ok: {len(result['datasets'])} cached session(s)")
             print(f"manifest: {manifest}")
         else:
             summary, run_id, trace, manifest = backtest(
-                config, raw, args.out, report=args.report
+                config, raw, args.out, report=args.report, invocation=invocation
             )
             print(f"ok: {len(summary['fills'])} simulated fill(s)")
             print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
         return EXIT_SUCCESS
+    except DiagnosticWriteError as exc:
+        print(
+            f"error: invocation evidence could not be saved ({exc}); "
+            f"invocation {invocation.invocation_id}",
+            file=sys.stderr,
+        )
+        return EXIT_OTHER_FAILURE
     except Exception as exc:  # noqa: BLE001 -- retained provider/loader failures
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         _print_attempt_paths(exc)
