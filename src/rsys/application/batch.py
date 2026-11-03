@@ -32,6 +32,7 @@ from rsys.research.experiments import (
     run_context,
     start_run,
 )
+from rsys.research.models import HISTORICAL_SCANNER_PROFILE_VERSION
 from rsys.research.multi_session import compute_multi_session_metrics
 from rsys.research.storage import RunStorage, canonical_hash
 from rsys.strategies.minute_scanner import HISTORY_SCANNER_VERSION
@@ -393,6 +394,21 @@ def run_batch_cli(
                         ),
                     }
                 )
+                if config.get("evidence_type") == "historical_bar_estimate":
+                    # Keep the complete scanner_hash above as evidence. Its generated
+                    # history timestamps also depend on feed delay, a separate cost
+                    # assumption. Compare controls separately from those observations;
+                    # pinned source objects still protect every history input.
+                    manifest["scanner_profile_version"] = (
+                        HISTORICAL_SCANNER_PROFILE_VERSION
+                    )
+                    manifest["scanner_profile_hash"] = canonical_hash(
+                        {
+                            k: v
+                            for k, v in batch.config["scanner"].items()
+                            if k != "history"
+                        }
+                    )
                 batch.run()
                 manifest["status"], manifest["metrics_scope"] = (
                     "success",

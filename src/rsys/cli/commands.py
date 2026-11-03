@@ -309,12 +309,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=_cmd_run)
 
     compare = subparsers.add_parser(
-        "compare", help="Compare two retained synthetic `rsys run` manifests"
+        "compare",
+        help="Compare two retained successful session runs or historical backtests",
     )
     compare.add_argument(
         "--storage-root",
         required=True,
-        help="The --out directory used by the two `rsys run` invocations",
+        help="The --out directory used by the two run/backtest invocations",
     )
     compare.add_argument(
         "--runs", nargs=2, required=True, metavar=("RUN_ID_A", "RUN_ID_B")

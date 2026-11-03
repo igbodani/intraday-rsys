@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rsys.data.calendar import CALENDAR_VERSION, session_close_utc, session_open_utc
+from rsys.data.timestamps import ns_to_datetime, parse_utc_timestamp_ns
 
 
 def encode(value):
@@ -60,16 +61,15 @@ def normalize_pages(pages, request):
             raise TypeError("Invalid Alpaca bars list")
         for row in rows:
             try:
-                timestamp = datetime.fromisoformat(row["t"])
-                if (
-                    timestamp.utcoffset() is None
-                    or timestamp.second
-                    or timestamp.microsecond
-                ):
+                try:
+                    timestamp_ns = parse_utc_timestamp_ns(row["t"])
+                    if timestamp_ns % 60_000_000_000:
+                        raise ValueError("Not an exact minute")
+                except (TypeError, ValueError) as exc:
                     raise ValueError(
-                        "Bar timestamps must be timezone-aware minute starts"
-                    )
-                timestamp = timestamp.astimezone(UTC)
+                        "Bar timestamps must be exact UTC minute starts"
+                    ) from exc
+                timestamp = ns_to_datetime(timestamp_ns)
                 if not opening <= timestamp < closing:
                     raise ValueError("Bar outside requested regular session")
                 values = {k: Decimal(str(row[k])) for k in ("o", "h", "l", "c", "v")}
@@ -91,11 +91,15 @@ def normalize_pages(pages, request):
             except (KeyError, TypeError, InvalidOperation) as exc:
                 raise ValueError("Malformed Alpaca bar") from exc
             if bar["t"] in selected:
-                if selected[bar["t"]] != bar:
+                previous = selected[bar["t"]]
+                if any(Decimal(previous[k]) != v for k, v in values.items()):
                     raise ValueError(
                         "Conflicting duplicate bar; revision ordering is unavailable"
                     )
                 duplicates += 1
+                # Keep the first representation; numeric equality, not JSON spelling,
+                # defines a duplicate. Retained source pages preserve both spellings.
+                continue
             selected[bar["t"]] = bar
     expected = [
         opening + timedelta(minutes=m)

@@ -1,16 +1,21 @@
-"""Compare sealed successful synthetic-session evidence, rejecting unexplained differences."""
+"""Compare sealed successful session evidence, rejecting unexplained differences."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
+from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from rsys.research.errors import CompareCliError, RunNotFoundError
 from rsys.research.evaluation import compare_runs
-from rsys.research.models import SyntheticRunAssumptions
+from rsys.research.models import (
+    HISTORICAL_SCANNER_PROFILE_VERSION,
+    SyntheticRunAssumptions,
+)
 from rsys.research.storage import RunStorage, _validate_run_id
 
 
@@ -93,9 +98,81 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
     return manifest
 
 
+def _historical_provenance(source: Any) -> Any:
+    """Retain source identity without counting declared experiment settings twice.
+
+    The expanded manifest already owns strategy, scanner, capital, risk, costs,
+    execution and completion settings. The original request remains fully retained;
+    only its comparison projection removes those duplicates. Unknown fields/schema
+    versions remain protected, as do datasets, partitions and action-review evidence.
+    """
+    source = deepcopy(source)
+    if not isinstance(source, dict):
+        return source
+    request = source.get("request")
+    if not isinstance(request, dict) or request.get("schema_version") != 1:
+        return source
+
+    def remove_known(mapping, names):
+        if isinstance(mapping, dict):
+            for name in names:
+                mapping.pop(name, None)
+
+    remove_known(request.get("strategy"), ("strategy", "strategy_config"))
+    remove_known(
+        request.get("scanner"),
+        (
+            "top_n",
+            "lookback_sessions",
+            "max_lookback_calendar_sessions",
+            "min_dollar_volume",
+            "max_current_bar_age_ms",
+        ),
+    )
+    account = request.get("account")
+    if isinstance(account, dict):
+        remove_known(account, ("initial_cash", "flatten_at", "completion_policy"))
+        remove_known(account.get("sizing"), ("quantity_step", "max_quantity"))
+        remove_known(
+            account.get("risk"),
+            (
+                "per_trade_fraction",
+                "daily_loss_fraction",
+                "maximum_drawdown_fraction",
+                "daily_loss_basis",
+                "halt_action",
+            ),
+        )
+        remove_known(
+            account.get("costs"),
+            (
+                "adverse_bps",
+                "feed_delay_ms",
+                "entry_fee",
+                "exit_fee",
+            ),
+        )
+        remove_known(account.get("execution"), ("decision_latency_ms", "max_hold_ms"))
+    return source
+
+
 def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptions:
     sizing = manifest["sizing"]
     encode = lambda v: json.dumps(v, sort_keys=True)
+    scanner_identity = manifest["scanner_hash"]
+    profile_version = manifest.get("scanner_profile_version")
+    profile_hash = manifest.get("scanner_profile_hash")
+    if profile_version is not None or profile_hash is not None:
+        if (
+            profile_version != HISTORICAL_SCANNER_PROFILE_VERSION
+            or manifest.get("evidence_type") != "historical_bar_estimate"
+            or not isinstance(profile_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", profile_hash)
+        ):
+            raise CompareCliError(
+                "unsupported or incomplete scanner comparison profile"
+            )
+        scanner_identity = [profile_version, profile_hash]
     return SyntheticRunAssumptions(
         universe=tuple(manifest["universe"]),
         cost_profile=encode(
@@ -116,7 +193,7 @@ def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptio
             "session_date", encode(manifest.get("session_dates"))
         ),
         market_data_hash=manifest["market_data_hash"],
-        scanner_profile=encode([manifest["scanner_hash"], manifest["top_n"]]),
+        scanner_profile=encode([scanner_identity, manifest["top_n"]]),
         strategies=encode(manifest["strategies"]),
         code_hash=manifest["code_hash"],
         dependency_lock_hash=manifest["dependency_lock_hash"],
@@ -124,7 +201,7 @@ def assumptions_from_manifest(manifest: dict[str, Any]) -> SyntheticRunAssumptio
             [
                 manifest.get("completion_policy"),
                 manifest.get("input_mode"),
-                manifest.get("historical_source"),
+                _historical_provenance(manifest.get("historical_source")),
                 *[
                     manifest[k]
                     for k in (

@@ -26,7 +26,12 @@ from rsys.account.risk import RiskManagedRunner, RiskMonitor
 from rsys.account.sizing import size_quantity
 from rsys.data.bar_rules import BarRuleSet, FixtureBarRuleSet
 from rsys.data.calendar import to_exchange_utc
-from rsys.data.models import BarCloseEvent, TradeCorrectionEvent, TradeEvent
+from rsys.data.models import (
+    BarCloseEvent,
+    TradeClassificationContext,
+    TradeCorrectionEvent,
+    TradeEvent,
+)
 from rsys.execution.contracts import (
     commit_entry,
     commit_exit,
@@ -317,7 +322,10 @@ class TradeInputRunner(RiskManagedRunner):
         return result
 
     def _on_trade(self, source: TradeEvent, point: int) -> None:
-        if source.instrument_id in self.portfolio.positions:
+        eligibility = self.rules.classify(
+            TradeClassificationContext(source.conditions, source.tape, self.interval)
+        )
+        if eligibility.close and source.instrument_id in self.portfolio.positions:
             self.portfolio.mark_position(source.instrument_id, source.price)
         # Apply all publications before decisions, and all exits before rank-ordered
         # entries. Source dispatch order must not become portfolio acceptance priority.
