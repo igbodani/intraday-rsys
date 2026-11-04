@@ -22,7 +22,7 @@ from rsys.research.models import (
     SyntheticRunAssumptions,
 )
 from rsys.research.storage import RunStorage, _validate_run_id
-from rsys.research.trace import verify_streamed_artifacts
+from rsys.research.trace import file_sha256, verify_streamed_artifacts
 
 
 def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
@@ -75,7 +75,7 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         except (DiagnosticIntegrityError, ValueError, TypeError) as exc:
             raise CompareCliError(str(exc)) from exc
     try:
-        trace_hash = hashlib.sha256((attempt / "trace.jsonl").read_bytes()).hexdigest()
+        trace_hash = file_sha256(attempt / "trace.jsonl")
     except OSError as exc:
         raise CompareCliError("trace is missing") from exc
     if trace_hash != manifest.get("semantic_trace_hash"):
@@ -116,7 +116,7 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
             if path.is_absolute() or ".." in path.parts or "\\" in name:
                 raise CompareCliError("invalid artifact path")
             try:
-                actual = hashlib.sha256((attempt / name).read_bytes()).hexdigest()
+                actual = file_sha256(attempt / name)
             except OSError as exc:
                 raise CompareCliError("retained artifact is missing") from exc
             if actual != expected:

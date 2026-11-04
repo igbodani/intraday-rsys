@@ -121,12 +121,18 @@ def _atomic_write_json(path: Path, value: Any, *, default=str) -> None:
     temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
     attempts = 5
     try:
-        data = json.dumps(value, indent=2, sort_keys=True, default=default).encode(
-            "utf-8"
-        )
         handle = temp.open("wb")
         try:
-            if handle.write(data) != len(data):
+            buffer = bytearray()
+            for chunk in json.JSONEncoder(
+                indent=2, sort_keys=True, default=default
+            ).iterencode(value):
+                buffer.extend(chunk.encode("utf-8"))
+                if len(buffer) >= 65536:
+                    if handle.write(buffer) != len(buffer):
+                        raise OSError("short atomic state write")
+                    buffer.clear()
+            if buffer and handle.write(buffer) != len(buffer):
                 raise OSError("short atomic state write")
             handle.flush()
             os.fsync(handle.fileno())
@@ -149,7 +155,43 @@ def _atomic_write_json(path: Path, value: Any, *, default=str) -> None:
 
 def atomic_write_json(path: Path, value: Any, *, default=str) -> None:
     """Publish a complete JSON summary without exposing truncated replacements."""
-    _atomic_write_json(path, json.loads(json.dumps(value, default=default)))
+    _atomic_write_json(path, _json_keys(value, default))
+
+
+def _json_keys(value, default=str):
+    """Preserve prior JSON conversion without serializing/parsing the tree.
+
+    JSON-native branches retain their original containers. Only branches needing
+    key/scalar conversion are copied; JSON's key collision rules still apply.
+    """
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            return {
+                next(iter(json.loads(json.dumps({key: None})))): _json_keys(
+                    child, default
+                )
+                for key, child in value.items()
+            }
+        result = None
+        for key, child in value.items():
+            converted = _json_keys(child, default)
+            if converted is not child:
+                if result is None:
+                    result = value.copy()
+                result[key] = converted
+        return value if result is None else result
+    if isinstance(value, (list, tuple)):
+        result = None
+        for index, child in enumerate(value):
+            converted = _json_keys(child, default)
+            if converted is not child:
+                if result is None:
+                    result = list(value)
+                result[index] = converted
+        return value if result is None else result
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return _json_keys(default(value), default)
 
 
 def read_diagnostic_journal(

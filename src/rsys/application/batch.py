@@ -22,6 +22,7 @@ from rsys.application.history_config import build_history_scanner, parse_scanner
 from rsys.application.results import summarize_runner
 from rsys.application.session_config import ms
 from rsys.application.sessions import SessionCoordinator
+from rsys.data.history_evidence import history_archive
 from rsys.execution.bar import BarSessionRunner
 from rsys.execution.errors import IncompleteSessionError
 from rsys.execution.models import ExecutionPolicy, Trade
@@ -44,7 +45,7 @@ from rsys.research.experiments import (
 from rsys.research.models import HISTORICAL_SCANNER_PROFILE_VERSION, DiagnosticEventCode
 from rsys.research.multi_session import compute_multi_session_metrics
 from rsys.research.storage import RunStorage, canonical_hash
-from rsys.research.trace import TraceWriter, read_trace
+from rsys.research.trace import TraceWriter, file_sha256, read_trace
 from rsys.strategies.minute_scanner import HISTORY_SCANNER_VERSION
 
 
@@ -581,13 +582,13 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                     )
                     write_json(attempt / "fills.json", summary.get("fills", []))
                     if batch is not None and batch.history is not None:
+                        manifest["scanner_history_version"] = 2
                         write_json(
                             attempt / "scanner_history.json",
-                            {
-                                identity: snapshot
+                            history_archive(
+                                runner.history_scanner.snapshots
                                 for runner in batch.runners
-                                for identity, snapshot in runner.history_scanner.snapshots.items()
-                            },
+                            ),
                         )
                     write_json(
                         attempt / "metrics.json",
@@ -608,9 +609,7 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                         )
                     artifacts = sorted(p for p in attempt.rglob("*") if p.is_file())
                     manifest["artifact_hashes"] = {
-                        p.relative_to(attempt).as_posix(): hashlib.sha256(
-                            p.read_bytes()
-                        ).hexdigest()
+                        p.relative_to(attempt).as_posix(): file_sha256(p)
                         for p in artifacts
                     }
                     # ARTIFACTS_READY must only be journaled once the manifest

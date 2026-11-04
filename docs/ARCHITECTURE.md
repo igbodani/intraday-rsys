@@ -121,3 +121,7 @@ input composition. `HistoricalDataPlan` lives in `application/models.py`. Both
 `reporting/preflight.py` HTML are sealed under a file-only manifest, linked from the
 early invocation and inspected/recovered by the existing research services. It
 creates no SQLite research trial. See [DATA_PREFLIGHT.md](DATA_PREFLIGHT.md).
+
+Scanner history now uses the lossless shared archive in `data/history_evidence.py`.
+Its active interning/reader services preserve original snapshot IDs and have no
+research/application dependencies. See [HISTORY_EVIDENCE.md](HISTORY_EVIDENCE.md).

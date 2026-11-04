@@ -12,12 +12,20 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 
+from rsys.data.history_evidence import read_history_archive
 from rsys.research.diagnostics import protect_evidence_write
 from rsys.research.errors import DiagnosticIntegrityError, TraceWriteError
 from rsys.research.models import TraceRead
 
 
-def read_trace(path: Path, *, expected_sha256=None, collect_records=True) -> TraceRead:
+def file_sha256(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def read_trace(
+    path: Path, *, expected_sha256=None, collect_records=True, record_sink=None
+) -> TraceRead:
     """Read only complete newline-terminated objects; disclose an incomplete tail.
     Complete malformed rows are corruption, not permission to skip evidence.
     """
@@ -39,6 +47,8 @@ def read_trace(path: Path, *, expected_sha256=None, collect_records=True) -> Tra
             ):
                 raise DiagnosticIntegrityError("invalid trace record shape")
             count += 1
+            if record_sink is not None:
+                record_sink(row)
             if collect_records:
                 rows.append(row)
     actual = digest.hexdigest()
@@ -58,12 +68,51 @@ def verify_streamed_artifacts(attempt: Path, manifest: dict) -> None:
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name:
             raise DiagnosticIntegrityError("invalid artifact path")
-        if hashlib.sha256((attempt / name).read_bytes()).hexdigest() != expected:
+        if file_sha256(attempt / name) != expected:
             raise DiagnosticIntegrityError("retained artifact integrity mismatch")
+    history = None
+    if "scanner_history_version" in manifest or "scanner_history.json" in hashes:
+        if "scanner_history.json" not in hashes:
+            raise DiagnosticIntegrityError("missing scanner history artifact")
+        version = manifest.get("scanner_history_version", 1)
+        if type(version) is not int or version not in (1, 2):
+            raise DiagnosticIntegrityError("unsupported scanner history version")
+        try:
+            history = read_history_archive(
+                attempt / "scanner_history.json", version=version
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DiagnosticIntegrityError("invalid scanner history archive") from exc
+
+    def verify_references(row):
+        evidence = row.get("scanner_evidence")
+        if evidence is None or evidence == {}:
+            return
+        if not isinstance(evidence, dict) or not isinstance(
+            evidence.get("symbols"), dict
+        ):
+            raise DiagnosticIntegrityError("invalid scanner evidence shape")
+        for detail in evidence["symbols"].values():
+            if not isinstance(detail, dict):
+                raise DiagnosticIntegrityError("invalid scanner symbol evidence")
+            snapshots = detail.get("history_sessions", [])
+            if not isinstance(snapshots, list):
+                raise DiagnosticIntegrityError("invalid scanner history references")
+            if "previous_session" in detail:
+                snapshots = [*snapshots, detail["previous_session"]]
+            for snapshot in snapshots:
+                if not isinstance(snapshot, dict) or not isinstance(
+                    snapshot.get("snapshot_id"), str
+                ):
+                    raise DiagnosticIntegrityError("invalid decision history reference")
+                if history is None or snapshot["snapshot_id"] not in history:
+                    raise DiagnosticIntegrityError("missing decision history snapshot")
+
     state = read_trace(
         attempt / "trace.jsonl",
         expected_sha256=manifest["semantic_trace_hash"],
         collect_records=False,
+        record_sink=verify_references,
     )
     if state.record_count != manifest.get("trace_records"):
         raise DiagnosticIntegrityError("trace record count mismatch")

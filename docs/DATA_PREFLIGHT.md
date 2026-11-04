@@ -98,3 +98,7 @@ measurements are unavailable, never fabricated zero. Measurements are operationa
 and do not enter P&L or the deterministic trace hash. A single measurement does not
 predict a larger workload's needs. See [BR-04 verification](agent-workflow/BR04_VERIFICATION.md)
 and the [evidence compaction follow-up](agent-workflow/evidence-compaction-followup.md).
+
+Shared history compaction is now implemented; see the [measured reduction and
+remaining limits](agent-workflow/BR04_F01_VERIFICATION.md). Re-measure your declared
+workload before scaling; the benchmark is not a production capacity guarantee.

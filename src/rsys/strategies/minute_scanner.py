@@ -7,8 +7,6 @@ gaps; no zero-volume bars or previous-day closes are invented.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +18,7 @@ from rsys.data.features import (
     compute_session_gain,
 )
 from rsys.data.history import MinuteHistoryProvider
+from rsys.data.history_evidence import HistorySnapshots
 from rsys.data.models import MinuteSymbolHistory
 from rsys.replay.views import ClosedOnlyContext
 from rsys.strategies.models import CandidateInput, HistoryScan
@@ -59,16 +58,12 @@ class MinuteHistoryScanner:
         self.close_ns = (
             self.open_ns + session_duration_minutes(session_date) * MINUTE_NS
         )
-        # Content-addressed snapshots avoid repeating full previous-day revisions
-        # at every decision. The application seals this registry with the trace.
-        self.snapshots: dict[str, dict] = {}
+        # Intern complete observations and sequence prefixes; logical snapshot
+        # IDs/read results remain identical to the original full representation.
+        self.snapshots = HistorySnapshots()
 
     def _retain(self, value) -> str:
-        payload = json.loads(json.dumps(asdict(value), default=str))
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        identity = hashlib.sha256(encoded).hexdigest()
-        self.snapshots[identity] = payload
-        return identity
+        return self.snapshots.retain(value)
 
     def evaluate(
         self, context: ClosedOnlyContext, *, as_of_ns: int, top_n: int

@@ -1,6 +1,6 @@
 # BR-04-F01 — Reduce repeated scanner evidence before larger experiments
 
-**Status: proposed, not implemented.** This is separate from provider verification
+**Status: implemented.** See [verification and measured limits](BR04_F01_VERIFICATION.md). This is separate from provider verification
 BR-05 and experiment registry BR-06. No credentials or new research assumptions
 are needed to build it. Bound real-data pilots until this resource cost is addressed.
 
