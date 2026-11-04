@@ -36,9 +36,10 @@ def config(tmp_path):
 
 
 def cache_files(config):
+    root = BarCache(config["cache"]).root
     return {
-        str(p.relative_to(config["cache"])): p.read_bytes()
-        for p in Path(config["cache"]).rglob("*")
+        str(p.relative_to(root)): p.read_bytes()
+        for p in root.rglob("*")
         if p.is_file()
     }
 
@@ -51,7 +52,7 @@ def object_path(config, day):
         config["dataset"]["asof"],
     )
     return (
-        Path(config["cache"])
+        BarCache(config["cache"]).root
         / "objects"
         / digest(req)
         / (config["objects"][day] + ".json")
@@ -305,8 +306,10 @@ def test_exact_pins_and_integrity_fail_in_preflight_and_backtest(
         object_path(config, day).unlink()
         try:
             object_path(config, day).symlink_to(target)
-        except OSError:
-            pytest.skip("symlink creation unavailable on this host")
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 1314:
+                raise
+            pytest.skip("Windows account lacks symlink privilege (WinError 1314)")
     else:
 
         def corrupt(p):

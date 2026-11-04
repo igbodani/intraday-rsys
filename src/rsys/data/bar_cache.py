@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
+import os
 import re
+import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -21,6 +24,16 @@ def encode(value):
 
 def digest(value):
     return hashlib.sha256(encode(value)).hexdigest()
+
+
+def _windows_extended_path(path):
+    """Keep absolute local/UNC cache paths usable without a registry change."""
+    path = ntpath.normpath(path)
+    if path.startswith("\\\\?\\"):
+        return path
+    if path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + path[2:]
+    return "\\\\?\\" + path
 
 
 def request_identity(symbol, day, feed, asof):
@@ -115,7 +128,12 @@ def normalize_pages(pages, request):
 
 class BarCache:
     def __init__(self, root):
-        self.root = Path(root).resolve()
+        # Prefix before resolve/mkdir/open, including when the cache is absent.
+        # Object IDs, request scoping and the on-disk layout remain unchanged.
+        path = Path(root)
+        if sys.platform == "win32":
+            path = Path(_windows_extended_path(os.path.abspath(root)))
+        self.root = Path(path).resolve()
 
     def _path(self, kind, identity):
         if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
@@ -128,12 +146,16 @@ class BarCache:
     @staticmethod
     def _write(path, payload):
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
+        temp = path.with_name("." + uuid4().hex + ".tmp")
+        created = False
         try:
-            temp.write_bytes(encode(payload))
+            with temp.open("xb") as handle:
+                created = True
+                handle.write(encode(payload))
             temp.replace(path)
         finally:
-            temp.unlink(missing_ok=True)
+            if created:
+                temp.unlink(missing_ok=True)
 
     def load(self, identity, request):
         raw = self._path("objects/" + digest(request), identity).read_bytes()

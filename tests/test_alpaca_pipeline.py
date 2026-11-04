@@ -333,7 +333,7 @@ def test_refresh_preserves_pinned_old_objects_and_tampering_is_rejected(tmp_path
     )
     assert result["datasets"][0]["object_id"] != old
     assert cache.load(old, req)["bars"][0]["v"] == "50"
-    path = next(Path(config["cache"]).glob(f"objects/*/{old}.json"))
+    path = next(cache.root.glob(f"objects/*/{old}.json"))
     path.write_text("{}")
     with pytest.raises(ValueError, match="hash mismatch"):
         backtest(config, b"request", tmp_path / "runs")
@@ -454,23 +454,34 @@ def test_cache_rejects_unsupported_evidence_even_with_a_matching_hash(
     payload = cache.load(config["objects"]["2024-11-27"], request)
     payload[field] = value
     identity = digest(payload)
-    target = Path(config["cache"]) / "objects" / digest(request) / (identity + ".json")
+    target = cache.root / "objects" / digest(request) / (identity + ".json")
     target.write_bytes(encode(payload))
     with pytest.raises(ValueError, match="schema/provider/timing"):
         cache.load(identity, request)
 
 
-def test_request_scoping_and_symlinks_cannot_alias_a_different_dataset(tmp_path):
+def test_request_scoping_cannot_alias_a_different_dataset(tmp_path):
     _, config = cached(tmp_path)
     cache = BarCache(config["cache"])
     request = request_identity("AAPL", date(2024, 11, 27), "iex", "-")
     identity = config["objects"]["2024-11-27"]
     with pytest.raises(FileNotFoundError):
         cache.load(identity, request)
-    source = next(Path(config["cache"]).glob(f"objects/*/{identity}.json"))
+
+
+def test_symlinks_cannot_alias_a_different_dataset(tmp_path):
+    _, config = cached(tmp_path)
+    cache = BarCache(config["cache"])
+    identity = config["objects"]["2024-11-27"]
+    source = next(cache.root.glob(f"objects/*/{identity}.json"))
     target = source.with_suffix(".other")
     source.rename(target)
-    source.symlink_to(target)
+    try:
+        source.symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != 1314:
+            raise
+        pytest.skip("Windows account lacks symlink privilege (WinError 1314)")
     with pytest.raises(ValueError, match="escapes"):
         cache.load(identity, request_identity("AAPL", date(2024, 11, 27), "sip", "-"))
 

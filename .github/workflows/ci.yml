@@ -3,15 +3,19 @@ name: Offline checks
 on:
   pull_request:
   push:
-    branches: [develop, feat/copilot-agent-workflow]
+    branches: [develop, feat/copilot-agent-workflow, docs/copilot-backtest-readiness]
 
 permissions:
   contents: read
 
 jobs:
   offline-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
