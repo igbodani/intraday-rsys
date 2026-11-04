@@ -4,8 +4,8 @@ import hashlib
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 
+from rsys.application.file_attempt import file_attempt
 from rsys.application.historical import (
     compose_backtest,
     load_request,
@@ -17,10 +17,8 @@ from rsys.data.history import candidate_prior_session_dates
 from rsys.reporting.preflight import preflight_html
 from rsys.research.diagnostics import (
     atomic_write_json,
-    invocation_scope,
     protect_evidence_write,
 )
-from rsys.research.errors import DiagnosticWriteError
 from rsys.research.experiments import redact_secrets
 from rsys.research.models import DiagnosticEventCode
 
@@ -153,116 +151,55 @@ def inspect_data(config, result, invocation):
 
 
 def check_data(config, out_dir, *, invocation=None, input_path=None):
-    """Retain a preflight, including malformed-input and evidence-write failures.
-
-    The atomic manifest is the outcome authority. A check is successful only if
-    eligibility passed and both required reports and diagnostics were saved.
-    """
-    with invocation_scope(
-        out_dir, command="check-data", invocation=invocation
-    ) as writer:
-        attempt = Path(out_dir) / "preflights" / writer.invocation_id
-        manifest = attempt / "manifest.json"
-        result = {
-            "schema_version": 1,
-            "status": "failed",
-            "can_execute": False,
-            "check_completed": False,
-            "history_coverage_complete": None,
-            "research_status": "unscored",
-            "datasets": [],
-            "access_log": [],
-            "errors": [],
-            "warnings": [],
-            "history_windows": [],
-            "inventory": {},
-            "limits": "Eligibility does not prove profitable signals, nonzero RVOL, provider entitlement or corporate-action correctness. The action review remains a caller attestation.",
-        }
-        owns_attempt = False
-        try:
-            attempt.mkdir(parents=True, exist_ok=False)
-            owns_attempt = True
-            writer.link_preflight_attempt(str(manifest))
-            if input_path is not None:
-                writer.record_identity(input_path=str(input_path))
+    """Validate local data and retain a file-only authoritative check outcome."""
+    result = {
+        "schema_version": 1,
+        "status": "failed",
+        "can_execute": False,
+        "check_completed": False,
+        "history_coverage_complete": None,
+        "research_status": "unscored",
+        "datasets": [],
+        "access_log": [],
+        "errors": [],
+        "warnings": [],
+        "history_windows": [],
+        "inventory": {},
+        "limits": "Eligibility does not prove profitable signals, nonzero RVOL, provider entitlement or corporate-action correctness. The action review remains a caller attestation.",
+    }
+    with file_attempt(
+        out_dir,
+        result,
+        command="check-data",
+        directory="preflights",
+        link_method="link_preflight_attempt",
+        report_name="preflight.json",
+        renderer=preflight_html,
+        write_json=atomic_write_json,
+        invocation=invocation,
+    ) as (writer, attempt):
+        if input_path is not None:
+            writer.record_identity(input_path=str(input_path))
+            try:
                 config, raw = load_request(input_path)
-                writer.record_identity(
-                    input_path=str(input_path),
-                    input_sha256=hashlib.sha256(raw).hexdigest(),
-                )
-            writer.use_config(config)
-            result["input"] = redact_secrets(config)
-            inspect_data(config, result, writer)
-            if result["can_execute"]:
-                result["status"] = "success"
-            else:
-                writer.fail(
-                    ValueError("Data preflight blocked; inspect preflight.json errors")
-                )
-            return result, manifest
-        except BaseException as exc:
-            if owns_attempt:
-                exc.manifest_path = manifest
-            if getattr(exc, "input_sha256", None):
+            except Exception as exc:
                 protect_evidence_write(
                     lambda error=exc: writer.record_identity(
-                        input_path=str(input_path), input_sha256=error.input_sha256
+                        input_path=str(input_path),
+                        input_sha256=getattr(error, "input_sha256", None),
                     )
                 )
-            result.update(
-                status="interrupted"
-                if isinstance(exc, KeyboardInterrupt)
-                else "failed",
-                can_execute=False,
-            )
-            result["error"] = {
-                "type": type(exc).__name__,
-                "message": writer.error_message(exc),
-            }
-            writer.fail(exc)
-            raise
-        finally:
-
-            def finalize():
-                if not owns_attempt:
-                    return
-                if writer.stage != "failed":
-                    writer.set_stage("finalizing")
-                atomic_write_json(attempt / "preflight.json", result)
-                (attempt / "report.html").write_text(
-                    preflight_html(result), encoding="utf-8"
-                )
-                envelope = {
-                    "status": "finalizing",
-                    "error": result.get("error", {}),
-                    "artifacts": {
-                        name: hashlib.sha256((attempt / name).read_bytes()).hexdigest()
-                        for name in ("preflight.json", "report.html")
-                    },
-                }
-                atomic_write_json(manifest, envelope)
-                if result["status"] == "success":
-                    writer.artifacts_ready(stage=writer.stage)
-                envelope.update(status=result["status"], diagnostics=writer.seal())
-                atomic_write_json(manifest, envelope)
-
-            try:
-                protect_evidence_write(finalize, catch=(OSError, DiagnosticWriteError))
-            except BaseException as exc:
-                exc.manifest_path = manifest
-                writer.fail(exc)
-                if owns_attempt:
-                    protect_evidence_write(
-                        lambda error=exc: atomic_write_json(
-                            manifest,
-                            {
-                                "status": "failed",
-                                "error": {
-                                    "type": type(error).__name__,
-                                    "message": writer.error_message(error),
-                                },
-                            },
-                        ),
-                        catch=(OSError, DiagnosticWriteError),
-                    )
                 raise
+            writer.record_identity(
+                input_path=str(input_path), input_sha256=hashlib.sha256(raw).hexdigest()
+            )
+        writer.use_config(config)
+        result["input"] = redact_secrets(config)
+        inspect_data(config, result, writer)
+        if result["can_execute"]:
+            result["status"] = "success"
+        else:
+            writer.fail(
+                ValueError("Data preflight blocked; inspect preflight.json errors")
+            )
+    return result, attempt / "manifest.json"

@@ -69,6 +69,8 @@ _DETAIL_KEYS = frozenset(
         "session_count",
         "page_count",
         "retry_count",
+        "request_count",
+        "http_status",
         "count",
         "event_id",
         "kind",
@@ -415,6 +417,11 @@ class DiagnosticWriter:
 
     def link_preflight_attempt(self, manifest_path: str) -> None:
         self._record.linked_preflight_attempt = manifest_path
+        self._record.stage = _STAGE_RESOLVED
+        self._write_invocation()
+
+    def link_provider_validation_attempt(self, manifest_path: str) -> None:
+        self._record.linked_provider_validation_attempt = manifest_path
         self._record.stage = _STAGE_RESOLVED
         self._write_invocation()
 

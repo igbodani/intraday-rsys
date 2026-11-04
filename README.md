@@ -6,7 +6,7 @@ Start with [the package and model map](docs/ARCHITECTURE.md) and [the documentat
 
 For agent-assisted development, use [the Copilot workflow](docs/COPILOT_WORKFLOW.md): four specialist agents, project/path instructions, reusable skills, task prompts and automated configuration/test checks.
 
-The next agent work order is [the backtest-readiness plan](docs/agent-workflow/backtest-readiness-plan.md), with an ordered to-do, [development tickets](docs/agent-workflow/backtest-readiness-tickets.md) and [testing/acceptance plan](docs/agent-workflow/backtest-readiness-tests.md). BR-01–BR-03 now provide streaming evidence, progress, status, recovery and session explanations; [the operator guide](docs/RUN_DIAGNOSTICS.md) documents the commands. Local-data preflight and bounded experiments remain planned. Continue with `/build-backtest-readiness BR-04` in a compatible Copilot Local session, or use the plan's pasteable prompt.
+The next agent work order is [the backtest-readiness plan](docs/agent-workflow/backtest-readiness-plan.md), with ordered [development tickets](docs/agent-workflow/backtest-readiness-tickets.md) and a [testing plan](docs/agent-workflow/backtest-readiness-tests.md). BR-01–BR-05 provide streaming evidence, progress, status/recovery, [local-data preflight](docs/DATA_PREFLIGHT.md), [compact history evidence](docs/HISTORY_EVIDENCE.md) and [explicitly enabled Alpaca validation](docs/ALPACA_PROVIDER_VALIDATION.md). Real-provider validation remains unrun. Continue with `/build-backtest-readiness BR-06` for bounded experiment plans; that software work does not need credentials.
 
 ## Current behavior
 

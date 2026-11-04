@@ -4,6 +4,11 @@ Implemented scope: one explicitly chosen stock per request, SIP or IEX one-minut
 
 ## Workflow
 
+For one bounded development sample, [the validation command](ALPACA_PROVIDER_VALIDATION.md)
+now composes acquisition, preflight, cache-reuse proof and a network-blocked backtest.
+It requires explicit enablement and retains a checklist of verified/unverified evidence.
+The lower-level commands below remain available with their existing behavior.
+
 1. Copy `configs/alpaca_download.example.json` and `configs/alpaca_backtest.example.json`. They deliberately contain blocked settings rather than silently approve feed, date partitions, liquidity/freshness thresholds or action coverage.
 2. Choose your entitled `sip` or `iex` feed. Keep it identical for current and historical bars. The example `asof: "-"` explicitly disables symbol remapping; a canonical date opts into Alpaca entity mapping. This is not an arrival-time or corporate-action cutoff.
 3. Declare non-overlapping date partitions using `{"name":"development"|"validation"|"final", "start":"YYYY-MM-DD", "end":"YYYY-MM-DD"}`. No split percentages or dates are automatically assigned. Development can read only development dates; validation can read development and validation dates; final and undeclared dates are always denied. Both acquisition and replay preflight all requested trading dates before any data/cache read. These are user-declared policy boundaries, not protection against an operator deliberately rewriting the policy.

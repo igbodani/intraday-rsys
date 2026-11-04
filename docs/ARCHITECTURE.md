@@ -125,3 +125,18 @@ creates no SQLite research trial. See [DATA_PREFLIGHT.md](DATA_PREFLIGHT.md).
 Scanner history now uses the lossless shared archive in `data/history_evidence.py`.
 Its active interning/reader services preserve original snapshot IDs and have no
 research/application dependencies. See [HISTORY_EVIDENCE.md](HISTORY_EVIDENCE.md).
+
+## Bounded provider validation
+
+`application/provider_validation.py` orchestrates existing download, preflight and
+backtest services. `application/file_attempt.py` owns their shared file-only check
+lifecycle; these operational checks do not create research trials. The final
+backtest creates its normal single trial. Pure account/strategy/scanner validation
+is reused before acquisition, without constructing prices or strategies.
+`data/alpaca.py` emits optional sanitized counts through a callback; application
+code connects it to diagnostics. The invocation link remains in `research/models.py`.
+The shared status reader verifies report/config hashes and diagnostic seals.
+`application/offline.py` provides a scoped Python network tripwire and
+`reporting/provider.py` escapes the operator report. No downloader, execution engine,
+core-to-application import or market assumption is duplicated. See
+[ALPACA_PROVIDER_VALIDATION.md](ALPACA_PROVIDER_VALIDATION.md).

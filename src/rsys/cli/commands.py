@@ -365,6 +365,31 @@ def _cmd_check_data(args):
     return EXIT_SUCCESS if result["can_execute"] else EXIT_DATA_ERROR
 
 
+def _cmd_validate_alpaca(args):
+    from rsys.application.provider_validation import validate_sample
+
+    try:
+        result, manifest = validate_sample(
+            args.config, args.out, enable_live=args.enable_live, refresh=args.refresh
+        )
+    except Exception as exc:  # noqa: BLE001 -- retained input/provider/persistence failure
+        print(
+            f"error: {type(exc).__name__}: {getattr(exc, 'diagnostic_message', 'Unable to complete provider validation')}",
+            file=sys.stderr,
+        )
+        _print_attempt_paths(exc)
+        return (
+            EXIT_OTHER_FAILURE
+            if isinstance(exc, (OSError, DiagnosticWriteError))
+            else EXIT_DATA_ERROR
+        )
+    print(f"software_status: {result['status']}")
+    print(f"real_provider_gate: {result['real_provider_gate']}")
+    print(f"manifest: {manifest}")
+    print(f"pinned_backtest: {manifest.parent / 'backtest.json'}")
+    return EXIT_SUCCESS
+
+
 def _cmd_inspect(args):
     try:
         if args.command == "status":
@@ -520,6 +545,24 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--config", required=True)
     preflight.add_argument("--out", required=True)
     preflight.set_defaults(func=_cmd_check_data)
+
+    provider = subparsers.add_parser(
+        "validate-alpaca",
+        help="Explicitly enabled bounded provider sample, cache reuse and offline validation",
+    )
+    provider.add_argument("--config", required=True, help="Local sample request JSON")
+    provider.add_argument("--out", required=True)
+    provider.add_argument(
+        "--enable-live",
+        action="store_true",
+        help="Also requires RSYS_ENABLE_ALPACA_VALIDATION=1",
+    )
+    provider.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Explicit new acquisition; old objects remain",
+    )
+    provider.set_defaults(func=_cmd_validate_alpaca)
 
     status = subparsers.add_parser(
         "status", help="Inspect an invocation or run without changing it"

@@ -202,6 +202,48 @@ def _trades(spec, day, opening, closing):
             raise RunConfigError("correction tape must be text or null")
 
 
+def validate_account_settings(config):
+    """Shared account/risk/cost settings, independent of price observations."""
+    if config["completion_policy"] not in ("require_flat", "allow_final_open_snapshot"):
+        raise RunConfigError("unsupported completion_policy")
+    decimal(config["initial_cash"], positive=True)
+    integer(config.get("top_n", 20), minimum=1)
+    fields(
+        config["sizing"],
+        {"quantity_step", "max_quantity"},
+        {"quantity_step", "max_quantity"},
+    )
+    decimal(config["sizing"]["quantity_step"], positive=True)
+    if config["sizing"]["max_quantity"] is not None:
+        decimal(config["sizing"]["max_quantity"], positive=True)
+    risk_fields = {
+        "per_trade_fraction",
+        "daily_loss_fraction",
+        "maximum_drawdown_fraction",
+        "daily_loss_basis",
+        "halt_action",
+    }
+    fields(config["risk"], risk_fields, risk_fields)
+    cost_fields = {"adverse_bps", "feed_delay_ms", "entry_fee", "exit_fee"}
+    fields(config["costs"], cost_fields, cost_fields)
+    for k in ("adverse_bps", "entry_fee", "exit_fee"):
+        decimal(config["costs"][k])
+    integer(config["costs"]["feed_delay_ms"])
+    try:
+        risk_policy(config)
+        execution_costs(config)
+    except ValueError as exc:
+        raise RunConfigError(str(exc)) from exc
+    fields(
+        config["execution"],
+        {"max_hold_ms", "decision_latency_ms"},
+        {"max_hold_ms", "decision_latency_ms"},
+    )
+    if config["execution"]["max_hold_ms"] is not None:
+        integer(config["execution"]["max_hold_ms"], minimum=1)
+    integer(config["execution"]["decision_latency_ms"])
+
+
 def validate_batch(config, *, allow_historical=False):
     required = {
         "schema_version",
@@ -242,44 +284,7 @@ def validate_batch(config, *, allow_historical=False):
         )
     if config["input_mode"] not in ("bar", "trade"):
         raise RunConfigError("input_mode must be bar or trade")
-    if config["completion_policy"] not in ("require_flat", "allow_final_open_snapshot"):
-        raise RunConfigError("unsupported completion_policy")
-    decimal(config["initial_cash"], positive=True)
-    integer(config.get("top_n", 20), minimum=1)
-    fields(
-        config["sizing"],
-        {"quantity_step", "max_quantity"},
-        {"quantity_step", "max_quantity"},
-    )
-    decimal(config["sizing"]["quantity_step"], positive=True)
-    if config["sizing"]["max_quantity"] is not None:
-        decimal(config["sizing"]["max_quantity"], positive=True)
-    risk_fields = {
-        "per_trade_fraction",
-        "daily_loss_fraction",
-        "maximum_drawdown_fraction",
-        "daily_loss_basis",
-        "halt_action",
-    }
-    fields(config["risk"], risk_fields, risk_fields)
-    cost_fields = {"adverse_bps", "feed_delay_ms", "entry_fee", "exit_fee"}
-    fields(config["costs"], cost_fields, cost_fields)
-    for k in ("adverse_bps", "entry_fee", "exit_fee"):
-        decimal(config["costs"][k])
-    integer(config["costs"]["feed_delay_ms"])
-    try:
-        risk_policy(config)
-        execution_costs(config)
-    except ValueError as exc:
-        raise RunConfigError(str(exc)) from exc
-    fields(
-        config["execution"],
-        {"max_hold_ms", "decision_latency_ms"},
-        {"max_hold_ms", "decision_latency_ms"},
-    )
-    if config["execution"]["max_hold_ms"] is not None:
-        integer(config["execution"]["max_hold_ms"], minimum=1)
-    integer(config["execution"]["decision_latency_ms"])
+    validate_account_settings(config)
     if not isinstance(config["sessions"], list) or not config["sessions"]:
         raise RunConfigError("sessions must be a nonempty list")
     previous = None

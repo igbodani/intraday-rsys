@@ -1,6 +1,6 @@
 # Backtest readiness: agent to-do and delivery plan
 
-**Status: BR-00–BR-04 implemented; BR-05–BR-08 remain planned.** See the [BR-01 handoff](BR01_VERIFICATION.md), [BR-02 streaming verification](BR02_VERIFICATION.md), [BR-03 operator verification](BR03_VERIFICATION.md) and [BR-04 data preflight verification](BR04_VERIFICATION.md) for reviewed behavior, checks and limits. This plan was prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its historical baseline was 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
+**Status: BR-00–BR-05 software implemented; BR-06–BR-08 remain planned. The BR-05 real-provider gate is unrun.** See the [BR-01 handoff](BR01_VERIFICATION.md), [BR-02 streaming verification](BR02_VERIFICATION.md), [BR-03 operator verification](BR03_VERIFICATION.md), [BR-04 data preflight verification](BR04_VERIFICATION.md) and [BR-05 provider workflow verification](BR05_VERIFICATION.md) for behavior, checks and limits. This plan was prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its historical baseline was 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
 
 ## Goal and reading order
 
@@ -24,7 +24,7 @@ The existing [Copilot roles and skills](../COPILOT_WORKFLOW.md) remain authorita
 | Sealed attempts, failures, comparisons and HTML reports | `research/storage.py`, `research/experiments.py`, `research/comparison.py`, `reporting/html.py` |
 | Fixes to historical comparison axes, timestamps, duplicate bars and fixture trade conditions | [Pre-data audit](../PRE_DATA_VALIDATION.md) and its regression tests |
 
-Do not rebuild these systems. BR-01 now saves operational invocation evidence before preparation and seals diagnostics at finalization. BR-02 streams the trading trace and saves inputs/session checkpoints during execution; `run_batch_cli()` prepares historical inputs before creating its research record; source hashes and resolved inputs are immutable once a record exists; scanner snapshots repeat minute evidence; real provider responses and large workloads remain unverified. BR-03 now exposes progress, read-only status, conservative recovery and per-session explanations; see [the operator guide](../RUN_DIAGNOSTICS.md). Offline data preflight, resource measurement and bounded experiment plans remain next.
+Do not rebuild these systems. BR-01 now saves operational invocation evidence before preparation and seals diagnostics at finalization. BR-02 streams the trading trace and saves inputs/session checkpoints during execution; `run_batch_cli()` prepares historical inputs before creating its research record; source hashes and resolved inputs are immutable once a record exists; scanner snapshots now share lossless observations/prefixes; real provider responses and large workloads remain unverified. BR-03 now exposes progress, read-only status, conservative recovery and per-session explanations; see [the operator guide](../RUN_DIAGNOSTICS.md). BR-04 adds offline data preflight/resource measurement; BR-04-F01 reduces retained history duplication; BR-05 adds the explicitly enabled provider workflow. Bounded experiment plans remain next.
 
 ## Ordered to-do
 
@@ -37,12 +37,12 @@ Mark a box only after its acceptance tests and required review pass. A skipped l
 | [x] | BR-02 | Streaming semantic trace and interrupted-run evidence | Python engineer / adversarial reviewer | BR-01 |
 | [x] | BR-03 | Progress, status, recovery and useful failure/no-trade explanations | Python engineer / adversarial reviewer | BR-02 |
 | [x] | BR-04 | Offline pinned-data preflight and resource inventory | Python engineer / quant researcher + reviewer | BR-01; integrate with BR-03 |
-| [ ] | BR-05 | Opt-in provider validation harness and operator checklist | Python engineer + quant researcher / reviewer | BR-03, BR-04 |
+| [x] | BR-05 | Opt-in provider validation software/checklist; real gate unrun | Python engineer + quant researcher / reviewer | BR-03, BR-04 |
 | [ ] | BR-06 | Finite experiment plans, complete attempt registry and comparison scorecard | Architect + engineer / quant researcher + reviewer | BR-03, BR-04 |
 | [ ] | BR-07 | First real-data reconciliation and controlled ORB/VWAP study | Owner + quant researcher / reviewer | BR-05 real-data gate, BR-06, explicit research settings |
 | [ ] | BR-08 | Specification and tests for one additional approved momentum strategy | Quant researcher + architect + engineer / reviewer | BR-07 and a complete strategy definition |
 
-**Build first:** BR-00 through BR-04. **Before a real sample:** BR-05's software must pass, and the owner must supply access and explicit inputs. **Before comparative market experiments:** BR-06 and the research checklist must pass. BR-08 is a later bounded ticket, not permission to invent or implement a catalogue of strategies.
+**Next software:** BR-06 finite experiment plans, which can be implemented and tested offline. **Before a real sample:** BR-05's software must pass, and the owner must supply access and explicit inputs. **Before comparative market experiments:** BR-06 and the research checklist must pass. BR-08 is a later bounded ticket, not permission to invent or implement a catalogue of strategies.
 
 One engineer owns a ticket and its shared files. A researcher may audit source/decision requirements while the engineer builds offline logging. Do not let concurrent writers edit `application/batch.py`, CLI parsing, storage schemas or the same tests. Reviewers use a separate session/check-out view and leave tracked files unchanged. A plan does not automatically launch subagents; use the existing client-supported role handoffs.
 
@@ -106,7 +106,7 @@ For a multi-ticket request, still implement and verify one bounded slice at a ti
 
 ## Publication and completion
 
-This branch now contains the specifications, prompt and BR-01/BR-02/BR-03 implementations. The remaining interfaces are proposed until their tickets pass. Future feature branches should start from this branch or a descendant containing it; after it is merged, start from the updated `develop`. Use one focused PR per ticket or tightly coupled slice. Do not merge or run live acquisition merely because a planning document says they are later steps.
+This branch contains the specifications, prompt, BR-01–BR-05 software and BR-04-F01 evidence compaction. The remaining interfaces are proposed until their tickets pass. Future feature branches should start from this branch or a descendant containing it; after it is merged, start from the updated `develop`. Use one focused PR per ticket or tightly coupled slice. Do not merge or run live acquisition merely because a planning document says they are later steps.
 
 Every ticket handoff must include its ID, base/head or working-tree scope, changed files, design/compatibility decisions, tests actually run, evidence paths, supported failures, review result and remaining owner dependencies. Store generated runs and credentials outside Git. Passing this pack's structural checks proves its references/metadata are valid, not that the proposed logging features already work.
 
@@ -115,6 +115,6 @@ Every ticket handoff must include its ID, base/head or working-tree scope, chang
 The delivered documentation/prompt diff passed the Copilot metadata/local-link checker, Ruff and `git diff --check`. All **937 existing offline tests passed in 121.82 seconds** with the frozen environment. A document consistency check verified nine unique tickets, 24 acceptance scenarios, balanced code fences and 25 existing test-file references. Application source, runtime tests, dependencies and fixture/config inputs are unchanged. No proposed ticket is marked implemented, and no provider call or download was performed while preparing this pack.
 
 BR-04 measured substantial scanner-evidence growth on small synthetic workloads.
-Track [BR-04-F01 evidence compaction](evidence-compaction-followup.md) separately;
-keep real-data pilots bounded before scaling experiments. BR-05 software can be
-built without credentials; its live check still requires explicit access and inputs.
+[BR-04-F01 evidence compaction](evidence-compaction-followup.md) is implemented
+and measured, but real-data pilots should remain bounded before scaling experiments.
+BR-05 software is implemented; its live check still requires explicit access and inputs.

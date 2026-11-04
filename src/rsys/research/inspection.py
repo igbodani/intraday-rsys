@@ -229,13 +229,20 @@ def _read_status(root, identity):
     if outcome == "failed" and progress.get("failure_type") == "KeyboardInterrupt":
         outcome = "interrupted"
     completeness = "partial"
-    if state.linked_download_attempt or state.linked_preflight_attempt:
-        if state.linked_download_attempt and state.linked_preflight_attempt:
+    linked = [
+        (kind, path)
+        for kind, path in (
+            ("downloads", state.linked_download_attempt),
+            ("preflights", state.linked_preflight_attempt),
+            ("provider-validations", state.linked_provider_validation_attempt),
+        )
+        if path
+    ]
+    if linked:
+        if len(linked) != 1:
             raise InspectionError("multiple file attempts linked to one invocation")
-        kind = "preflights" if state.linked_preflight_attempt else "downloads"
-        # Download directories may be moved as a whole: use the retained ID,
-        # never trust an arbitrary absolute path from an invocation file.
-        saved = Path(state.linked_preflight_attempt or state.linked_download_attempt)
+        kind, saved_path = linked[0]
+        saved = Path(saved_path)
         if saved.name != "manifest.json" or saved.parent.parent.name != kind:
             raise InspectionError("invalid download manifest path")
         download_id = _validate_run_id(saved.parent.name)
@@ -266,11 +273,24 @@ def _read_status(root, identity):
                 if seal.get("invocation_id") != state.invocation_id:
                     raise InspectionError("download invocation mismatch")
                 verify_diagnostic_seal(root, seal)
-                if kind == "preflights":
+                if kind in ("preflights", "provider-validations"):
                     artifacts = manifest.get("artifacts", {})
-                    if set(artifacts) != {"preflight.json", "report.html"}:
-                        raise InspectionError("invalid preflight artifact inventory")
+                    required = {
+                        "preflight.json" if kind == "preflights" else "validation.json",
+                        "report.html",
+                    }
+                    if not isinstance(artifacts, dict) or not required <= set(
+                        artifacts
+                    ):
+                        raise InspectionError("invalid file attempt artifact inventory")
                     for name, expected in artifacts.items():
+                        if (
+                            not isinstance(name, str)
+                            or Path(name).name != name
+                            or name in (".", "..")
+                            or "\\" in name
+                        ):
+                            raise InspectionError("invalid file artifact path")
                         artifact = _path(root, kind, download_id, name)
                         if _optional_hash(artifact) != expected:
                             raise InspectionError(

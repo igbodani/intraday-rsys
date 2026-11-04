@@ -11,14 +11,25 @@ from pathlib import Path
 from uuid import uuid4
 
 from rsys.application.batch import run_batch_cli, write_json
-from rsys.application.batch_config import validate_batch
+from rsys.application.batch_config import (
+    _dated_time,
+    _strategy,
+    validate_account_settings,
+    validate_batch,
+)
 from rsys.application.dataset_policy import DatasetPolicy
 from rsys.application.errors import RunConfigError
+from rsys.application.history_config import parse_scanner
 from rsys.application.models import HistoricalDataPlan
-from rsys.application.session_config import fields, integer
+from rsys.application.session_config import fields, integer, ms
 from rsys.data.alpaca import AlpacaBarsClient
 from rsys.data.bar_cache import BarCache, request_identity
-from rsys.data.calendar import EXCHANGE_TZ, is_trading_day
+from rsys.data.calendar import (
+    EXCHANGE_TZ,
+    is_trading_day,
+    session_close_local,
+    session_open_local,
+)
 from rsys.data.history import candidate_prior_session_dates
 from rsys.research.diagnostics import (
     DiagnosticWriter,
@@ -328,7 +339,7 @@ def plan_backtest(config, access_log, invocation: DiagnosticWriter | None = None
         d.isoformat() for d in required_days
     }:
         raise ValueError("Pin exactly one cache object per execution/warmup date")
-    return HistoricalDataPlan(
+    plan = HistoricalDataPlan(
         config,
         tuple(days),
         frozenset(warmup_days),
@@ -337,6 +348,61 @@ def plan_backtest(config, access_log, invocation: DiagnosticWriter | None = None
             for day in sorted(required_days)
         },
     )
+    validate_historical_settings(plan)
+    return plan
+
+
+def validate_historical_settings(plan):
+    """Validate settings before acquisition; no fabricated bars or runner objects."""
+    config = plan.config
+    account = config["account"]
+    keys = {
+        "initial_cash",
+        "sizing",
+        "risk",
+        "costs",
+        "execution",
+        "completion_policy",
+        "flatten_at",
+    }
+    fields(account, keys, keys)
+    fields(
+        config["strategy"],
+        {"strategy", "strategy_config"},
+        {"strategy", "strategy_config"},
+    )
+    validate_account_settings({**account, "top_n": config["scanner"]["top_n"]})
+    parse_scanner(
+        {
+            "evidence_type": "historical_bar_estimate",
+            "historical_source": {"feed": config["dataset"]["feed"]},
+            "scanner": {
+                "mode": "minute_history",
+                "feed": config["dataset"]["feed"],
+                "unit_basis": "raw",
+                "corporate_actions": "none",
+                **{k: v for k, v in config["scanner"].items() if k != "top_n"},
+                "history": {},
+            },
+        }
+    )
+    for day in plan.execution_dates:
+        opening, closing = (
+            ms(session_open_local(day).isoformat()),
+            ms(session_close_local(day).isoformat()),
+        )
+        _strategy(config["strategy"], opening, closing)
+        flatten = account["flatten_at"]
+        if flatten is not None:
+            point = ms(flatten)
+            if "T" in flatten:
+                _dated_time(flatten, day)
+            if not opening <= point < closing:
+                raise RunConfigError("flatten_at must precede session close")
+        if closing + account["costs"]["feed_delay_ms"] >= 86_400_000:
+            raise RunConfigError(
+                "modeled feed delay moves input outside the declared session date"
+            )
 
 
 def open_backtest_cache(plan):
