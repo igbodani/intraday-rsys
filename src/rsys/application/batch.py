@@ -40,9 +40,10 @@ from rsys.research.experiments import (
     run_context,
     start_run,
 )
-from rsys.research.models import HISTORICAL_SCANNER_PROFILE_VERSION
+from rsys.research.models import HISTORICAL_SCANNER_PROFILE_VERSION, DiagnosticEventCode
 from rsys.research.multi_session import compute_multi_session_metrics
 from rsys.research.storage import RunStorage, canonical_hash
+from rsys.research.trace import TraceWriter, read_trace
 from rsys.strategies.minute_scanner import HISTORY_SCANNER_VERSION
 
 
@@ -122,7 +123,7 @@ class SessionBatch:
             costs=self.costs,
         )
 
-    def run(self):
+    def run(self, *, event_sink=None, session_sink=None):
         if self._ran:
             raise ValueError("a batch attempt is single-use")
         self._ran = True
@@ -184,6 +185,10 @@ class SessionBatch:
             record["status"] = "failed"
             self.coordinator.last_runner = None
             try:
+                if session_sink is not None:
+                    session_sink(
+                        "start", {"session_date": plan["date"], "status": "running"}
+                    )
                 runner = self.coordinator.run_session(
                     day,
                     data,
@@ -192,6 +197,13 @@ class SessionBatch:
                     history_scanner=build_history_scanner(
                         self.config, self.history, day, plan["symbols"]
                     ),
+                    event_sink=(
+                        lambda row, session_date=plan["date"]: event_sink(
+                            {"session_date": session_date, **row}
+                        )
+                    )
+                    if event_sink is not None
+                    else None,
                 )
                 if self.portfolio.positions and (
                     index < len(self.sessions) - 1
@@ -204,7 +216,12 @@ class SessionBatch:
             except BaseException as exc:
                 if isinstance(exc, KeyboardInterrupt):
                     record["status"] = "interrupted"
-                record["error"] = {"type": type(exc).__name__, "message": str(exc)}
+                record["error"] = {
+                    "type": type(exc).__name__,
+                    "message": SecretRedactor.from_resolved_config(self.config).scrub(
+                        str(exc)
+                    ),
+                }
                 raise
             finally:
                 runner = self.coordinator.last_runner
@@ -223,6 +240,11 @@ class SessionBatch:
                     record["risk_state"] = self.risk.snapshot()
                     self.trace.extend(
                         {"session_date": plan["date"], **r} for r in runner.trace
+                    )
+                if session_sink is not None:
+                    protect_evidence_write(
+                        lambda record=record: session_sink("end", deepcopy(record)),
+                        catch=(DiagnosticWriteError, OSError),
                     )
 
     def summary(self):
@@ -299,6 +321,7 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
         invocation = start_invocation(out_dir, command="run")
     if not isinstance(config, dict):
         config = {"invalid_input": config}
+    original_input = deepcopy(config)
     batch, error = None, None
     try:
         if prepare is not None:
@@ -336,6 +359,7 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
         manifest = {
             "schema_version": 3,
             "diagnostics_version": 1,
+            "trace_version": 1,
             "evidence_type": config.get("evidence_type", "unresolved_invalid_config"),
             "historical_source": redact_secrets(config.get("historical_source")),
             "run_id": record.run_id,
@@ -360,14 +384,30 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                 else "supplied_synthetic_scores"
             ),
         }
+        trace_writer = None
         with run_context(storage, record):
             # Metadata and directory failures are handled failures in the same
             # authoritative lifecycle as execution/finalization failures.
             invocation.link_run(record.run_id)
             attempt.mkdir(parents=True, exist_ok=False)
             try:
-                if error:
-                    raise error
+
+                def prepare_evidence():
+                    nonlocal trace_writer
+                    trace_writer = TraceWriter(trace_path)
+                    write_json(attempt / "input.json", redact_secrets(original_input))
+                    write_json(attempt / "resolved_config.json", record.resolved_config)
+                    if access_log is not None:
+                        write_json(attempt / "data_access.json", access_log)
+
+                if error is not None:
+                    try:
+                        raise error
+                    finally:
+                        protect_evidence_write(
+                            prepare_evidence, catch=(DiagnosticWriteError, OSError)
+                        )
+                prepare_evidence()
                 manifest.update(
                     {
                         "execution_basis": "historical_bar_open_estimate_v1"
@@ -447,7 +487,25 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                             if k != "history"
                         }
                     )
-                batch.run()
+
+                def session_checkpoint(boundary, session):
+                    write_json(
+                        attempt / "sessions" / f"{session['session_date']}.json",
+                        session,
+                    )
+                    trace_writer.checkpoint()
+                    invocation.event(
+                        DiagnosticEventCode.SESSION_START
+                        if boundary == "start"
+                        else DiagnosticEventCode.SESSION_END,
+                        invocation.stage,
+                        details={"date": session["session_date"]},
+                    )
+
+                batch.run(
+                    event_sink=trace_writer.write, session_sink=session_checkpoint
+                )
+                trace_writer.close()
                 manifest["status"], manifest["metrics_scope"] = (
                     "success",
                     "complete_attempt",
@@ -465,6 +523,8 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                 invocation.fail(exc, stage="resolved")
                 raise
             finally:
+                if trace_writer is not None:
+                    protect_evidence_write(trace_writer.close)
 
                 def _finalize_stage() -> None:
                     if invocation.stage != "failed":
@@ -487,15 +547,6 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                 summary = batch.summary() if batch else {}
                 manifest.update(summary)
                 rows = batch.trace if batch else []
-                trace_text = "".join(
-                    json.dumps(r, sort_keys=True, default=str) + "\n" for r in rows
-                )
-                # Hash exactly the canonical bytes written, independent of Windows
-                # text-mode newline translation. The verifier still hashes raw bytes.
-                trace_bytes = trace_text.encode("utf-8")
-                manifest["semantic_trace_hash"] = hashlib.sha256(
-                    trace_bytes
-                ).hexdigest()
 
                 def _write_all_artifacts() -> None:
                     # All writes below (trace/input/resolved_config/fills/scanner
@@ -508,9 +559,13 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                     # raised in its place.
                     if access_log is not None:
                         write_json(attempt / "data_access.json", access_log)
-                    trace_path.write_bytes(trace_bytes)
-                    write_json(attempt / "input.json", redact_secrets(config))
-                    write_json(attempt / "resolved_config.json", record.resolved_config)
+                    trace_state = read_trace(trace_path, collect_records=False)
+                    manifest["semantic_trace_hash"] = trace_state.sha256
+                    manifest["trace_records"] = trace_state.record_count
+                    manifest["trace_complete"] = (
+                        manifest["status"] == "success"
+                        and not trace_state.incomplete_tail
+                    )
                     write_json(attempt / "fills.json", summary.get("fills", []))
                     if batch is not None and batch.history is not None:
                         write_json(

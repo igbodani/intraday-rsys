@@ -1,6 +1,7 @@
 """Portable HTML report for a retained `rsys run` attempt (docs/M2_IMPLEMENTATION_HANDOFF.md
-step 9, report subset). Reads manifest.json + trace.jsonl only; no external assets or
-network call is required to open the rendered file.
+step 9, report subset). Legacy attempts use manifest/trace files; streamed attempts
+also verify the authoritative run and linked evidence before regeneration. No
+external assets or network call is required to open the rendered HTML file.
 
 Renders legacy synthetic bar runs and version-3 bar/trade session manifests, including
 partial failures. Data-only `rsys replay` attempts use their own evidence format.
@@ -8,12 +9,18 @@ partial failures. Data-only `rsys replay` attempts use their own evidence format
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 from pathlib import Path
 from typing import Any
 
 from rsys.reporting.errors import ReportError
+from rsys.research.comparison import load_run_manifest
+from rsys.research.diagnostics import verify_diagnostic_seal
+from rsys.research.errors import CompareCliError, RunNotFoundError
+from rsys.research.storage import RunStorage
+from rsys.research.trace import read_trace, verify_streamed_artifacts
 
 
 def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -25,6 +32,50 @@ def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]
         raise ReportError(f"cannot read manifest: {manifest_path}") from exc
     except json.JSONDecodeError as exc:
         raise ReportError(f"manifest is not valid JSON: {exc}") from exc
+    if "trace_version" in manifest:
+        try:
+            if not (attempt_dir.parent.parent / "runs.db").is_file():
+                raise ValueError("missing authoritative run outcome")
+            if manifest.get("status") == "success":
+                load_run_manifest(attempt_dir.parent.parent, attempt_dir.name)
+            else:
+                storage = RunStorage(attempt_dir.parent.parent)
+                try:
+                    record = storage.load_record(attempt_dir.name)
+                finally:
+                    storage.close()
+                if (
+                    record.status not in ("failed", "interrupted", "crashed")
+                    or record.decision_gate_status.get("manifest_sha256")
+                    != hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                ):
+                    raise ValueError("attempt has no verified terminal outcome")
+                if (
+                    manifest.get("run_id") != attempt_dir.name
+                    or manifest.get("diagnostics_version") != 1
+                ):
+                    raise ValueError("invalid streamed attempt identity/version")
+                verify_diagnostic_seal(
+                    attempt_dir.parent.parent,
+                    json.loads(record.decision_gate_status.get("diagnostics", "{}")),
+                    run_id=attempt_dir.name,
+                )
+                verify_streamed_artifacts(attempt_dir, manifest)
+            state = read_trace(
+                trace_path, expected_sha256=manifest["semantic_trace_hash"]
+            )
+            return manifest, list(state.records)
+        except (
+            OSError,
+            ValueError,
+            CompareCliError,
+            RunNotFoundError,
+            KeyError,
+            TypeError,
+        ) as exc:
+            raise ReportError(
+                f"incomplete or invalid streamed evidence: {exc}"
+            ) from exc
     try:
         lines = trace_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:

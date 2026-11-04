@@ -63,3 +63,7 @@ class DiagnosticWriteError(Exception):
 
 class DiagnosticIntegrityError(ValueError):
     """A journal has invalid complete records or differs from its sealed bytes."""
+
+
+class TraceWriteError(DiagnosticWriteError):
+    """Required semantic trace could not be saved; the attempt must stop."""

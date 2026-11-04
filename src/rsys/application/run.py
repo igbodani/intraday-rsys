@@ -23,6 +23,7 @@ from rsys.research.diagnostics import (
     start_invocation,
 )
 from rsys.research.errors import DiagnosticWriteError
+from rsys.research.trace import TraceWriter, read_trace
 
 
 def load_session_config(path: str | Path) -> dict[str, Any]:
@@ -70,8 +71,8 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
     """Retain every invocation, including unreadable/invalid input and partial runs."""
     import hashlib
 
-    from rsys.reporting.html import render_report_for_attempt
-    from rsys.research.experiments import run_context, start_run
+    from rsys.reporting.html import render_report
+    from rsys.research.experiments import redact_secrets, run_context, start_run
     from rsys.research.storage import RunStorage, canonical_hash
 
     out_dir = Path(out_dir)
@@ -127,7 +128,7 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                 attempt / "trace.jsonl",
                 attempt / "manifest.json",
             )
-            runner = None
+            runner, trace_writer = None, None
             try:
                 # Inside the fail()-covered try: a collision/permission failure here
                 # must still leave a FAILURE event, never an invocation stuck "resolved".
@@ -139,6 +140,7 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                         "evidence_type": "synthetic_standalone",
                         "run_id": record.run_id,
                         "status": "failed",
+                        "metrics_scope": "partial_attempt",
                         "config_hash": record.config_hash,
                         "data_hash": record.data_hash,
                         "code_hash": record.code_hash,
@@ -150,11 +152,29 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                         "account_basis": "synthetic_immediate_settlement",
                         "completion_policy": "required_exits_or_finite_input_snapshot",
                         "diagnostics_version": 1,
+                        "trace_version": 1,
                     }
                     try:
+
+                        def prepare_evidence():
+                            nonlocal trace_writer
+                            trace_writer = TraceWriter(trace_path)
+                            _write_json(attempt / "input.json", redact_secrets(config))
+                            _write_json(
+                                attempt / "resolved_config.json", record.resolved_config
+                            )
+
                         if error is not None:
-                            raise error
+                            try:
+                                raise error
+                            finally:
+                                protect_evidence_write(
+                                    prepare_evidence,
+                                    catch=(DiagnosticWriteError, OSError),
+                                )
+                        prepare_evidence()
                         runner, bars, scanner = build_runner(config)
+                        runner.event_sink = trace_writer.write
                         starting = runner.portfolio.equity({})
                         # Resolve defaults into evidence, so an omitted setting is never a hidden assumption.
                         manifest.update(
@@ -184,6 +204,7 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             }
                         )
                         runner.run_session(bars, scanner)
+                        trace_writer.close()
                         summary = summarize_runner(runner, starting)
                         manifest.update(
                             {
@@ -197,24 +218,21 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             }
                         )
                         manifest["status"] = "success"
+                        manifest["metrics_scope"] = "complete_attempt"
                         record.metrics = json.loads(
                             json.dumps(summary["metrics"], default=_json_default)
                         )
                     except BaseException as exc:
+                        if isinstance(exc, KeyboardInterrupt):
+                            manifest["status"] = "interrupted"
                         # Record the execution failure before finally seals the
                         # journal. Outer handlers deduplicate this exception.
                         invocation.fail(exc)
                         raise
                     finally:
+                        if trace_writer is not None:
+                            protect_evidence_write(trace_writer.close)
                         rows = runner.trace if runner is not None else []
-                        trace_text = "".join(
-                            json.dumps(row, sort_keys=True, default=_json_default)
-                            + "\n"
-                            for row in rows
-                        )
-                        manifest["semantic_trace_hash"] = hashlib.sha256(
-                            trace_text.encode()
-                        ).hexdigest()
 
                         def _finalize_evidence() -> None:
                             # Everything here -- the trace/manifest files and the
@@ -225,7 +243,21 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             # this `finally` block; it is attached to that exception
                             # instead (`protect_evidence_write`), never raised in its
                             # place.
-                            trace_path.write_bytes(trace_text.encode("utf-8"))
+                            trace_state = read_trace(trace_path, collect_records=False)
+                            manifest["semantic_trace_hash"] = trace_state.sha256
+                            manifest["trace_records"] = trace_state.record_count
+                            manifest["trace_complete"] = (
+                                manifest["status"] == "success"
+                                and not trace_state.incomplete_tail
+                            )
+                            if runner is not None:
+                                partial_summary = summarize_runner(runner, starting)
+                                _write_json(
+                                    attempt / "fills.json", partial_summary["fills"]
+                                )
+                                _write_json(
+                                    attempt / "account.json", runner._snapshot()
+                                )
                             if invocation.stage != "failed":
                                 invocation.set_stage("finalizing")
                             # ARTIFACTS_READY must only be journaled once the
@@ -234,16 +266,24 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             # failure would leave a journal falsely claiming
                             # readiness for an attempt that was never fully
                             # saved.
+                            if report and manifest["status"] == "success":
+                                (attempt / "report.html").write_text(
+                                    render_report(manifest, rows), encoding="utf-8"
+                                )
+                            artifacts = sorted(
+                                p for p in attempt.iterdir() if p.is_file()
+                            )
+                            manifest["artifact_hashes"] = {
+                                p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                for p in artifacts
+                            }
                             _write_json(manifest_path, manifest)
                             record.artifacts.extend(
-                                [str(trace_path), str(manifest_path)]
+                                str(p) for p in [*artifacts, manifest_path]
                             )
                             record.decision_gate_status["manifest_sha256"] = (
                                 hashlib.sha256(manifest_path.read_bytes()).hexdigest()
                             )
-                            if report and manifest["status"] == "success":
-                                report_path = render_report_for_attempt(attempt)
-                                record.artifacts.append(str(report_path))
                             if manifest["status"] == "success":
                                 invocation.artifacts_ready(stage=invocation.stage)
                             record.decision_gate_status["diagnostics"] = json.dumps(

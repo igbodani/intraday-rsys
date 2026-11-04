@@ -45,8 +45,10 @@ from rsys.execution.models import (
     ExecutionPolicy,
     FillRecord,
     RejectedEntry,
+    TraceSink,
     Trade,
 )
+from rsys.execution.trace import emit_trace
 from rsys.execution.trade_adapter import TradeExecutionAdapter
 from rsys.replay.models import PhaseEvent, ReplayProfile
 from rsys.replay.runtime import ReplayRunner, SeriesRouter
@@ -89,6 +91,7 @@ class TradeInputRunner(RiskManagedRunner):
         risk: RiskMonitor | None = None,
         costs: ExecutionCosts | None = None,
         history_scanner: MinuteHistoryScanner | None = None,
+        event_sink: TraceSink | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -117,6 +120,7 @@ class TradeInputRunner(RiskManagedRunner):
         self.decisions: list[DecisionRecord] = []
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
+        self.event_sink = event_sink
         self.contexts = []
         self._decision_points: set[int] = set()
         self._trade_batches: dict[int, list[TradeEvent]] = {}
@@ -307,9 +311,10 @@ class TradeInputRunner(RiskManagedRunner):
             row["risk"] = self.risk.snapshot()
         if isinstance(result, DecisionRecord):
             row.update(asdict(result))
-        self.trace.append(row)
+        emit_trace(self.trace, row, self.event_sink)
         for fill in self.fills[before:]:
-            self.trace.append(
+            emit_trace(
+                self.trace,
                 {
                     "kind": "fill",
                     "event_id": event.event_id,
@@ -317,7 +322,8 @@ class TradeInputRunner(RiskManagedRunner):
                     "phase": event.phase,
                     **asdict(fill),
                     "account": self._snapshot(),
-                }
+                },
+                self.event_sink,
             )
         return result
 

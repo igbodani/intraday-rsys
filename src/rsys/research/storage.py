@@ -21,6 +21,7 @@ import ctypes
 import hashlib
 import json
 import os
+import socket
 import sqlite3
 import sys
 import uuid
@@ -372,6 +373,8 @@ class RunStorage:
     ) -> list[str]:
         """Mark every 'running' run whose owning process is actually dead as 'crashed'.
         A run with a live owner is left untouched -- recovery must never mark a live run crashed.
+        Missing ownership or a different host stays unresolved; an absent local
+        PID says nothing about an owner on another machine (BR-02).
 
         Ownership/liveness checks are local-host only (`os.kill`/`OpenProcess` by PID): this
         cannot and does not infer whether a *remote* host's owning process has died. The lock
@@ -409,7 +412,12 @@ class RunStorage:
                 record = self.load_record(run_id)
                 if record.status != "running":
                     continue
-                if record.owner_pid is not None and _pid_is_alive(record.owner_pid):
+                if (
+                    record.owner_host != socket.gethostname()
+                    or record.owner_pid is None
+                ):
+                    continue  # Missing/remote ownership is not proof of a local crash.
+                if _pid_is_alive(record.owner_pid):
                     continue
                 record.status = "crashed"
                 record.ended_at = datetime.now(UTC).isoformat()

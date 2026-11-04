@@ -33,7 +33,9 @@ from rsys.execution.models import (
     FillRecord,
     FillTransition,
     RejectedEntry,
+    TraceSink,
 )
+from rsys.execution.trace import emit_trace
 from rsys.replay.models import PhaseEvent, ReplayProfile
 from rsys.replay.runtime import ReplayRunner
 from rsys.strategies.interfaces import StrategyLike
@@ -57,6 +59,7 @@ class BarSessionRunner(RiskManagedRunner):
         history_scanner: MinuteHistoryScanner | None = None,
         provider: str = "synthetic",
         feed: str = "fixture",
+        event_sink: TraceSink | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -80,6 +83,7 @@ class BarSessionRunner(RiskManagedRunner):
         self.decisions: list[DecisionRecord] = []
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
+        self.event_sink = event_sink
         self.contexts = []
         self._intervals: dict[str, int] = {}
         self._ran = False
@@ -277,9 +281,10 @@ class BarSessionRunner(RiskManagedRunner):
             row["scanner_inputs"] = event.payload["scanner"]
         if isinstance(result, DecisionRecord):
             row.update(asdict(result))
-        self.trace.append(row)
+        emit_trace(self.trace, row, self.event_sink)
         for fill in self.fills[before:]:
-            self.trace.append(
+            emit_trace(
+                self.trace,
                 {
                     "kind": "fill",
                     "event_id": event.event_id,
@@ -287,7 +292,8 @@ class BarSessionRunner(RiskManagedRunner):
                     "phase": event.phase,
                     **asdict(fill),
                     "account": self._snapshot(),
-                }
+                },
+                self.event_sink,
             )
         return result
 

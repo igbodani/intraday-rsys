@@ -118,6 +118,10 @@ def test_original_schema_two_and_three_do_not_require_new_diagnostics(
     _, run_id, _, manifest_path = run_cli_entry(ROOT / "fixtures" / fixture, tmp_path)
     manifest = json.loads(manifest_path.read_text())
     del manifest["diagnostics_version"]
+    for field in ("trace_version", "trace_records", "trace_complete"):
+        manifest.pop(field, None)
+    if manifest["schema_version"] == 2:
+        manifest.pop("artifact_hashes", None)
     manifest_path.write_text(json.dumps(manifest))
     # Construct a correctly pinned original-format record in a separate store.
     db = RunStorage(tmp_path)

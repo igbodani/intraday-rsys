@@ -22,6 +22,7 @@ from rsys.research.models import (
     SyntheticRunAssumptions,
 )
 from rsys.research.storage import RunStorage, _validate_run_id
+from rsys.research.trace import verify_streamed_artifacts
 
 
 def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
@@ -79,6 +80,15 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         raise CompareCliError("trace is missing") from exc
     if trace_hash != manifest.get("semantic_trace_hash"):
         raise CompareCliError("trace integrity mismatch")
+    if "trace_version" in manifest:
+        try:
+            if manifest.get("trace_complete") is not True:
+                raise DiagnosticIntegrityError("incomplete streamed trace")
+            verify_streamed_artifacts(attempt, manifest)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise CompareCliError(
+                f"streamed evidence integrity failure: {exc}"
+            ) from exc
     if manifest["schema_version"] == 3:
         hashes = manifest.get("artifact_hashes", {})
         required = {

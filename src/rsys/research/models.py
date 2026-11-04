@@ -254,6 +254,14 @@ class DiagnosticJournalRead:
 
 
 @dataclass(frozen=True)
+class TraceRead:
+    records: tuple[dict, ...]
+    record_count: int
+    sha256: str
+    incomplete_tail: bool
+
+
+@dataclass(frozen=True)
 class DatePartition:
     name: str
     start: str

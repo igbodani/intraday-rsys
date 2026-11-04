@@ -321,7 +321,7 @@ def test_required_report_failure_is_not_comparable_success(
     from rsys.reporting import html
 
     if mode == "legacy":
-        monkeypatch.setattr(html, "render_report_for_attempt", failure("report failed"))
+        monkeypatch.setattr(html, "render_report", failure("report failed"))
     else:
         monkeypatch.setattr(html, "render_report", failure("report failed"))
     fixture = (
