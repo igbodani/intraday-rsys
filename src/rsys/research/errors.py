@@ -59,3 +59,7 @@ class DiagnosticWriteError(Exception):
     Raised instead of silently proceeding: a command whose own operational evidence
     cannot be saved must fail loudly (BR-01), never report success with missing
     evidence."""
+
+
+class DiagnosticIntegrityError(ValueError):
+    """A journal has invalid complete records or differs from its sealed bytes."""

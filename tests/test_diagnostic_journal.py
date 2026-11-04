@@ -177,7 +177,9 @@ def test_fail_redacts_known_secret_values_from_exception_text(tmp_path):
 
 
 def test_fail_withholds_free_text_when_redaction_context_is_unknown(tmp_path):
-    writer = start_invocation(tmp_path, command="run", redactor=SecretRedactor.unknown())
+    writer = start_invocation(
+        tmp_path, command="run", redactor=SecretRedactor.unknown()
+    )
     writer.fail(ValueError(f"leaked {_SECRET_VALUE}"))
 
     failure = next(
@@ -235,7 +237,9 @@ def test_no_injected_secret_appears_in_a_real_backtest_failure_attempt(tmp_path)
 
     for path in (tmp_path / "out").rglob("*"):
         if path.is_file():
-            assert _SECRET_VALUE not in path.read_text(encoding="utf-8", errors="ignore")
+            assert _SECRET_VALUE not in path.read_text(
+                encoding="utf-8", errors="ignore"
+            )
 
 
 # ---- T03: Append, flush and encoding boundaries ------------------------------
@@ -257,7 +261,9 @@ def test_event_schema_has_required_fields_and_monotonic_sequence(tmp_path):
 
 
 def test_embedded_newlines_and_html_stay_single_line_encoded_data(tmp_path):
-    writer = start_invocation(tmp_path, command="run")
+    writer = start_invocation(
+        tmp_path, command="run", redactor=SecretRedactor([], known=True)
+    )
     writer.event(
         DiagnosticEventCode.FAILURE,
         "preparing",
@@ -276,19 +282,20 @@ def test_flush_and_sync_boundaries_are_honored(tmp_path, monkeypatch):
     real_fsync = os.fsync
 
     def _fsync(fd):
-        synced.append(fd)
+        synced.append(os.fstat(fd).st_ino)
         return real_fsync(fd)
 
     monkeypatch.setattr("rsys.research.diagnostics.os.fsync", _fsync)
 
     writer = start_invocation(tmp_path, command="run")  # INVOCATION_START syncs
-    assert len(synced) == 1
+    journal_inode = writer.journal_path.stat().st_ino
+    assert synced.count(journal_inode) == 1
     writer.event(DiagnosticEventCode.CONFIG_LOADED, "preparing")  # ordinary info
-    assert len(synced) == 1
+    assert synced.count(journal_inode) == 1
     writer.event(DiagnosticEventCode.ARTIFACTS_READY, "finalizing")  # sync-mandated
-    assert len(synced) == 2
+    assert synced.count(journal_inode) == 2
     writer.event(DiagnosticEventCode.CONFIG_LOADED, "preparing", level="error")
-    assert len(synced) == 3
+    assert synced.count(journal_inode) == 3
 
 
 def test_append_failure_preserves_prior_lines_and_raises_diagnostic_write_error(
@@ -326,7 +333,9 @@ def test_a_torn_trailing_line_is_distinguishable_from_the_valid_prefix(tmp_path)
     assert on_disk.startswith(complete_bytes)
     raw_lines = on_disk.split(b"\n")
     for line in raw_lines[:-1]:
-        json.loads(line)  # every earlier record parses as one complete, independent line
+        json.loads(
+            line
+        )  # every earlier record parses as one complete, independent line
     with pytest.raises(json.JSONDecodeError):
         json.loads(raw_lines[-1])  # the torn trailing record is identifiably incomplete
 
@@ -400,7 +409,7 @@ def test_run_cli_entry_never_reports_success_when_invocation_cannot_be_created(
     def _boom(*_args, **_kwargs):
         raise DiagnosticWriteError("simulated unwritable disk")
 
-    monkeypatch.setattr(run_module, "start_invocation", _boom)
+    monkeypatch.setattr("rsys.research.diagnostics.start_invocation", _boom)
     with pytest.raises(DiagnosticWriteError):
         run_module.run_cli_entry(STANDALONE_FIXTURE, tmp_path / "out")
 
@@ -511,13 +520,13 @@ def test_run_batch_cli_marks_the_invocation_failed_on_an_attempt_directory_colli
     assert failure_events[0]["stage"] == "resolved"
 
 
-def test_download_marks_the_invocation_failed_and_retains_a_manifest_on_an_attempt_directory_collision(
+def test_download_marks_the_invocation_failed_without_writing_into_a_colliding_attempt(
     tmp_path, monkeypatch
 ):
     """`download()`'s attempt directory used to be created before any exception
     handling existed at all; a collision there must still fail loudly, mark the
-    invocation failed, and still retain a "failed" manifest (regression for a
-    reviewed gap)."""
+    invocation failed, and preserve the existing attempt's files. The new
+    invocation owns its journal but does not own the colliding directory."""
     import rsys.application.historical as historical_mod
 
     class _FixedUUID4:
@@ -550,13 +559,12 @@ def test_download_marks_the_invocation_failed_and_retains_a_manifest_on_an_attem
     assert DiagnosticEventCode.FAILURE.value in events
 
     manifest_path = out_dir / "downloads" / "fixed-download-id" / "manifest.json"
-    assert manifest_path.exists()
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))["status"] == "failed"
+    assert not manifest_path.exists()
 
 
 def test_download_failure_after_resolution_reports_resolved_not_preparing(tmp_path):
     """Once `link_download_attempt()` has resolved the invocation, every later
-    event -- including the terminal FAILURE/ARTIFACTS_READY pair -- must reflect
+    failure event must reflect
     that true stage, never the stale "preparing" label from before resolution
     (regression for a reviewed gap)."""
     import rsys.application.historical as historical_mod
@@ -586,12 +594,15 @@ def test_download_failure_after_resolution_reports_resolved_not_preparing(tmp_pa
     assert on_disk["linked_download_attempt"] is not None
 
     records = _read_jsonl(invocation_dirs[0] / "diagnostics.jsonl")
-    failure = next(r for r in records if r["event"] == DiagnosticEventCode.FAILURE.value)
-    assert failure["stage"] == "resolved"
-    artifacts_ready = next(
-        r for r in records if r["event"] == DiagnosticEventCode.ARTIFACTS_READY.value
+    failure = next(
+        r for r in records if r["event"] == DiagnosticEventCode.FAILURE.value
     )
-    assert artifacts_ready["stage"] == "failed"
+    assert failure["stage"] == "resolved"
+    assert records[-1] == failure
+    assert (
+        json.loads(Path(on_disk["linked_download_attempt"]).read_text())["status"]
+        == "failed"
+    )
 
 
 def test_cli_run_prints_a_distinct_nonzero_failure_when_evidence_cannot_be_saved(
@@ -863,7 +874,9 @@ def test_download_journals_a_failure_when_its_sole_manifest_write_fails(
     # this re-download is served entirely from cache (no client/network needed).
     out_dir = tmp_path / "out"
     invocation = start_invocation(out_dir, command="download")
-    with pytest.raises(OSError, match="simulated disk full on manifest.json write") as excinfo:
+    with pytest.raises(
+        OSError, match="simulated disk full on manifest.json write"
+    ) as excinfo:
         historical_mod.download(acquisition, out_dir, invocation=invocation)
 
     events = [r["event"] for r in _read_jsonl(invocation.journal_path)]
@@ -895,7 +908,9 @@ def test_run_batch_cli_journals_a_failure_when_its_sole_manifest_write_fails(
     cfg = session_config("trade")
     out_dir = tmp_path / "out"
     invocation = start_invocation(out_dir, command="run")
-    with pytest.raises(OSError, match="simulated disk full on manifest.json write") as excinfo:
+    with pytest.raises(
+        OSError, match="simulated disk full on manifest.json write"
+    ) as excinfo:
         batch_module.run_batch_cli(
             cfg,
             json.dumps(cfg).encode("utf-8"),
@@ -1014,10 +1029,14 @@ def test_download_records_artifacts_ready_only_after_the_manifest_is_saved(
 
     def spying_write_json(path, value):
         if path.name == "manifest.json":
-            order.append("manifest_written")
+            order.append("manifest_" + value["status"])
         return real_write_json(path, value)
 
     def spying_artifacts_ready(self, *, stage="finalizing"):
+        assert (
+            json.loads(Path(self._record.linked_download_attempt).read_text())["status"]
+            == "finalizing"
+        )
         order.append("artifacts_ready")
         return real_artifacts_ready(self, stage=stage)
 
@@ -1027,7 +1046,7 @@ def test_download_records_artifacts_ready_only_after_the_manifest_is_saved(
     out_dir = tmp_path / "out"
     report, manifest_path = historical_mod.download(acquisition, out_dir)
 
-    assert order == ["manifest_written", "artifacts_ready"]
+    assert order == ["manifest_finalizing", "artifacts_ready", "manifest_success"]
     assert manifest_path.exists()
     assert report["status"] == "success"
 
@@ -1094,13 +1113,10 @@ def test_cli_run_prints_evidence_locations_when_its_sole_manifest_write_fails(
     config_path.write_text(json.dumps(cfg), encoding="utf-8")
     out_dir = tmp_path / "out"
 
-    exit_code = cli_main(
-        ["run", "--config", str(config_path), "--out", str(out_dir)]
-    )
+    exit_code = cli_main(["run", "--config", str(config_path), "--out", str(out_dir)])
 
     captured = capsys.readouterr()
     assert exit_code == EXIT_OTHER_FAILURE
     assert "run_id:" in captured.err
     assert "trace:" in captured.err
     assert "manifest:" in captured.err
-

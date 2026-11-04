@@ -223,6 +223,8 @@ class InvocationRecord(BaseModel):
     owner_host: str | None = None
     ended_at: str | None = None
     write_failure: str | None = None
+    journal_sha256: str | None = None
+    journal_records: int | None = None
 
 
 class DiagnosticRecord(BaseModel):
@@ -241,6 +243,14 @@ class DiagnosticRecord(BaseModel):
     stage: InvocationStage
     details: dict[str, Any] = Field(default_factory=dict)
     simulation_time: str | None = None
+
+
+@dataclass(frozen=True)
+class DiagnosticJournalRead:
+    records: tuple[DiagnosticRecord, ...]
+    record_count: int
+    sha256: str
+    incomplete_tail: bool
 
 
 @dataclass(frozen=True)

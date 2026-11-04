@@ -27,6 +27,8 @@ from rsys.execution.models import ExecutionPolicy, Trade
 from rsys.execution.trade import TradeInputRunner
 from rsys.research.diagnostics import (
     DiagnosticWriter,
+    atomic_write_json,
+    invocation_scope,
     protect_evidence_write,
     start_invocation,
 )
@@ -53,10 +55,7 @@ def json_value(value):
 
 
 def write_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, default=str), encoding="utf-8"
-    )
+    atomic_write_json(path, value)
 
 
 class SessionBatch:
@@ -278,6 +277,21 @@ def run_batch_cli(
     access_log=None,
     invocation: DiagnosticWriter | None = None,
 ):
+    with invocation_scope(out_dir, command="run", invocation=invocation) as writer:
+        if isinstance(config, dict):
+            writer.use_config(config)
+        return _run_batch_cli(
+            config,
+            raw,
+            out_dir,
+            report=report,
+            prepare=prepare,
+            access_log=access_log,
+            invocation=writer,
+        )
+
+
+def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocation):
     from rsys.reporting.html import render_report
 
     owns_invocation = invocation is None
@@ -317,20 +331,11 @@ def run_batch_cli(
         except BaseException as exc:
             invocation.fail(exc, stage="preparing")
             raise
-        invocation.link_run(record.run_id)
         attempt = out_dir / "attempts" / record.run_id
-        try:
-            # A collision/permission failure creating the attempt directory must
-            # still leave a FAILURE event, never an invocation stuck "resolved".
-            # link_run() above already moved the invocation to "resolved", so the
-            # failure must be tagged "resolved" too, not the earlier "preparing".
-            attempt.mkdir(parents=True, exist_ok=False)
-        except BaseException as exc:
-            invocation.fail(exc, stage="resolved")
-            raise
         trace_path, manifest_path = attempt / "trace.jsonl", attempt / "manifest.json"
         manifest = {
             "schema_version": 3,
+            "diagnostics_version": 1,
             "evidence_type": config.get("evidence_type", "unresolved_invalid_config"),
             "historical_source": redact_secrets(config.get("historical_source")),
             "run_id": record.run_id,
@@ -356,6 +361,10 @@ def run_batch_cli(
             ),
         }
         with run_context(storage, record):
+            # Metadata and directory failures are handled failures in the same
+            # authoritative lifecycle as execution/finalization failures.
+            invocation.link_run(record.run_id)
+            attempt.mkdir(parents=True, exist_ok=False)
             try:
                 if error:
                     raise error
@@ -456,6 +465,7 @@ def run_batch_cli(
                 invocation.fail(exc, stage="resolved")
                 raise
             finally:
+
                 def _finalize_stage() -> None:
                     if invocation.stage != "failed":
                         invocation.set_stage("finalizing")
@@ -500,9 +510,7 @@ def run_batch_cli(
                         write_json(attempt / "data_access.json", access_log)
                     trace_path.write_bytes(trace_bytes)
                     write_json(attempt / "input.json", redact_secrets(config))
-                    write_json(
-                        attempt / "resolved_config.json", record.resolved_config
-                    )
+                    write_json(attempt / "resolved_config.json", record.resolved_config)
                     write_json(attempt / "fills.json", summary.get("fills", []))
                     if batch is not None and batch.history is not None:
                         write_json(
@@ -543,13 +551,15 @@ def run_batch_cli(
                     # falsely claiming readiness for an attempt that was never
                     # fully saved.
                     write_json(manifest_path, manifest)
-                    record.artifacts.extend(
-                        str(p) for p in [*artifacts, manifest_path]
-                    )
+                    record.artifacts.extend(str(p) for p in [*artifacts, manifest_path])
                     record.decision_gate_status["manifest_sha256"] = hashlib.sha256(
                         manifest_path.read_bytes()
                     ).hexdigest()
-                    invocation.artifacts_ready(stage=invocation.stage)
+                    if manifest["status"] == "success":
+                        invocation.artifacts_ready(stage=invocation.stage)
+                    record.decision_gate_status["diagnostics"] = json.dumps(
+                        invocation.seal(), sort_keys=True
+                    )
 
                 try:
                     protect_evidence_write(

@@ -10,7 +10,12 @@ from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from rsys.research.errors import CompareCliError, RunNotFoundError
+from rsys.research.diagnostics import verify_diagnostic_seal
+from rsys.research.errors import (
+    CompareCliError,
+    DiagnosticIntegrityError,
+    RunNotFoundError,
+)
 from rsys.research.evaluation import compare_runs
 from rsys.research.models import (
     HISTORICAL_SCANNER_PROFILE_VERSION,
@@ -57,6 +62,17 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         != hashlib.sha256(raw).hexdigest()
     ):
         raise CompareCliError("manifest integrity mismatch")
+    if "diagnostics_version" in manifest:
+        try:
+            if manifest["diagnostics_version"] != 1:
+                raise DiagnosticIntegrityError("unsupported diagnostic evidence")
+            verify_diagnostic_seal(
+                storage_root,
+                json.loads(record.decision_gate_status.get("diagnostics", "{}")),
+                run_id=run_id,
+            )
+        except (DiagnosticIntegrityError, ValueError, TypeError) as exc:
+            raise CompareCliError(str(exc)) from exc
     try:
         trace_hash = hashlib.sha256((attempt / "trace.jsonl").read_bytes()).hexdigest()
     except OSError as exc:

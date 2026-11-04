@@ -153,16 +153,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         invocation = start_invocation(out_dir, command="run")
     except DiagnosticWriteError as exc:
-        print(
-            f"error: invocation evidence could not be saved: {exc}", file=sys.stderr
-        )
+        print(f"error: invocation evidence could not be saved: {exc}", file=sys.stderr)
         return EXIT_OTHER_FAILURE
     try:
         summary, run_id, trace_path, manifest_path = run_cli_entry(
             args.config, out_dir, report=args.report, invocation=invocation
         )
     except RunConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {getattr(exc, 'diagnostic_message', str(exc))}", file=sys.stderr)
         _print_attempt_paths(exc)
         return EXIT_INVALID_CONFIG
     except IncompleteSessionError as exc:
@@ -182,6 +180,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"invocation {invocation.invocation_id}",
             file=sys.stderr,
         )
+        _print_attempt_paths(exc)
         return EXIT_OTHER_FAILURE
     except Exception as exc:  # noqa: BLE001 -- CLI boundary; lifecycle already retained the failure
         print(
@@ -206,6 +205,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _print_attempt_paths(exc):
     for label, attribute in (
+        ("invocation", "invocation_path"),
+        ("journal", "journal_path"),
         ("run_id", "run_id"),
         ("trace", "trace_path"),
         ("manifest", "manifest_path"),
@@ -220,7 +221,7 @@ def _print_attempt_paths(exc):
     if diagnostic_write_error is not None:
         print(
             f"warning: invocation evidence could not be fully saved: "
-            f"{diagnostic_write_error}",
+            f"{type(diagnostic_write_error).__name__}; see invocation evidence when available",
             file=sys.stderr,
         )
 
@@ -262,54 +263,67 @@ def _cmd_data(args):
         load_request,
         retain_input_failure,
     )
-    from rsys.research.diagnostics import start_invocation
+    from rsys.research.diagnostics import protect_evidence_write, start_invocation
 
     out_dir = Path(args.out)
     try:
         invocation = start_invocation(out_dir, command=args.command)
     except DiagnosticWriteError as exc:
-        print(
-            f"error: invocation evidence could not be saved: {exc}", file=sys.stderr
-        )
+        print(f"error: invocation evidence could not be saved: {exc}", file=sys.stderr)
         return EXIT_OTHER_FAILURE
 
     try:
         try:
             config, raw = load_request(args.config)
-            invocation.record_identity(
-                input_path=str(args.config),
-                input_sha256=hashlib.sha256(raw).hexdigest(),
-            )
         except Exception as exc:
-            invocation.record_identity(input_path=str(args.config))
+            input_sha256 = getattr(exc, "input_sha256", None)
+            protect_evidence_write(
+                lambda: invocation.record_identity(
+                    input_path=str(args.config), input_sha256=input_sha256
+                ),
+                catch=(DiagnosticWriteError, OSError),
+            )
             retain_input_failure(
                 args.config, args.out, args.command, exc, invocation=invocation
             )
             raise
+        invocation.record_identity(
+            input_path=str(args.config), input_sha256=hashlib.sha256(raw).hexdigest()
+        )
         if args.command == "download":
             result, manifest = download(
                 config, args.out, refresh=args.refresh, invocation=invocation
             )
-            print(f"ok: {len(result['datasets'])} cached session(s)")
-            print(f"manifest: {manifest}")
         else:
             summary, run_id, trace, manifest = backtest(
                 config, raw, args.out, report=args.report, invocation=invocation
             )
-            print(f"ok: {len(summary['fills'])} simulated fill(s)")
-            print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
-        return EXIT_SUCCESS
     except DiagnosticWriteError as exc:
+        invocation.fail(exc)
+        protect_evidence_write(invocation.close)
         print(
             f"error: invocation evidence could not be saved ({exc}); "
             f"invocation {invocation.invocation_id}",
             file=sys.stderr,
         )
+        _print_attempt_paths(exc)
         return EXIT_OTHER_FAILURE
     except Exception as exc:  # noqa: BLE001 -- retained provider/loader failures
-        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        invocation.fail(exc)
+        protect_evidence_write(invocation.close)
+        print(f"error: {type(exc).__name__}: {exc.diagnostic_message}", file=sys.stderr)
         _print_attempt_paths(exc)
         return EXIT_DATA_ERROR
+
+    # Console delivery happens after the committed outcome. A broken output
+    # pipe cannot append to or rewrite a completed invocation's evidence.
+    if args.command == "download":
+        print(f"ok: {len(result['datasets'])} cached session(s)")
+        print(f"manifest: {manifest}")
+    else:
+        print(f"ok: {len(summary['fills'])} simulated fill(s)")
+        print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
+    return EXIT_SUCCESS
 
 
 def build_parser() -> argparse.ArgumentParser:

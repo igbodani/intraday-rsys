@@ -19,6 +19,7 @@ from rsys.data.calendar import EXCHANGE_TZ, is_trading_day
 from rsys.data.history import candidate_prior_session_dates
 from rsys.research.diagnostics import (
     DiagnosticWriter,
+    invocation_scope,
     protect_evidence_write,
     start_invocation,
 )
@@ -42,6 +43,18 @@ def download(
     input_error=None,
     invocation: DiagnosticWriter | None = None,
 ):
+    with invocation_scope(out_dir, command="download", invocation=invocation) as writer:
+        return _download(
+            config,
+            out_dir,
+            client=client,
+            refresh=refresh,
+            input_error=input_error,
+            invocation=writer,
+        )
+
+
+def _download(config, out_dir, *, client, refresh, input_error, invocation):
     out_dir = Path(out_dir)
     owns_invocation = invocation is None
     if invocation is None:
@@ -53,10 +66,12 @@ def download(
         "datasets": [],
         "access_log": [],
     }
+    owns_attempt = False
     try:
-        # A collision/permission failure here must still leave a FAILURE event and
-        # a retained manifest, never an invocation with no record of what happened.
+        # A collision/permission failure still belongs to this invocation, but
+        # never permits replacing evidence in an existing attempt directory.
         attempt.mkdir(parents=True, exist_ok=False)
+        owns_attempt = True
         invocation.link_download_attempt(str(attempt / "manifest.json"))
         if input_error is not None:
             raise RunConfigError(input_error)
@@ -139,10 +154,15 @@ def download(
         )
         return report, attempt / "manifest.json"
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            report["status"] = "interrupted"
-        exc.manifest_path = attempt / "manifest.json"
-        report["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        report["status"] = (
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        )
+        if owns_attempt:
+            exc.manifest_path = attempt / "manifest.json"
+        report["error"] = {
+            "type": type(exc).__name__,
+            "message": invocation.error_message(exc),
+        }
         # Reflect the invocation's true current stage, not a hardcoded "preparing"
         # that becomes stale once link_download_attempt() has already resolved it.
         invocation.fail(exc)
@@ -155,29 +175,48 @@ def download(
             # replace/mask whatever application exception is already propagating
             # through this `finally` block (attached instead, never raised in its
             # place).
+            if not owns_attempt:
+                return  # A colliding attempt belongs to somebody else.
             if invocation.stage != "failed":
                 invocation.set_stage("finalizing")
             # ARTIFACTS_READY must only be journaled once the manifest (the last
             # required artifact) is actually on disk -- never before, or a
             # manifest-write failure would leave a journal falsely claiming
             # readiness for an attempt that was never fully saved.
+            # Downloads have no SQLite authority. Publish a non-success state
+            # first, then seal diagnostics, then atomically commit the outcome.
+            provisional = (
+                {**report, "status": "finalizing"}
+                if report["status"] == "success"
+                else report
+            )
+            write_json(attempt / "manifest.json", provisional)
+            if report["status"] == "success":
+                invocation.artifacts_ready(stage=invocation.stage)
+            report["diagnostics"] = invocation.seal()
             write_json(attempt / "manifest.json", report)
-            invocation.artifacts_ready(stage=invocation.stage)
 
         try:
             protect_evidence_write(
                 _finalize_evidence, catch=(DiagnosticWriteError, OSError)
             )
         except BaseException as write_exc:
-            # Same guarantee as `batch.py`: a bare write failure here (nothing
-            # already in flight) is the sole primary failure and must be
-            # journaled, never left to silently escape with a journal ending at
-            # ARTIFACTS_READY -- indistinguishable from a true success. This is
-            # the only durable evidence `download()` has (no SQLite run record).
-            # Mirror the main exception handler above so the CLI can still print
-            # the retained attempt's manifest location for this failure shape.
+            # Before sealing, record this sole write failure in the journal.
+            # After sealing, preserve those bytes and update the small state
+            # summary instead. The atomic manifest remains the download outcome
+            # authority: ARTIFACTS_READY alone never establishes success.
             write_exc.manifest_path = attempt / "manifest.json"
+            report["status"] = "failed"
+            report["error"] = {
+                "type": type(write_exc).__name__,
+                "message": invocation.error_message(write_exc),
+            }
             invocation.fail(write_exc)
+            if owns_attempt:
+                protect_evidence_write(
+                    lambda: write_json(attempt / "manifest.json", report),
+                    catch=(OSError, DiagnosticWriteError),
+                )
             raise
         if owns_invocation:
             invocation.close()
@@ -392,16 +431,13 @@ def backtest(
     invocation: DiagnosticWriter | None = None,
 ):
     out_dir = Path(out_dir)
-    owns_invocation = invocation is None
-    if invocation is None:
-        invocation = start_invocation(out_dir, command="backtest")
-    access_log = []
+    with invocation_scope(out_dir, command="backtest", invocation=invocation) as writer:
+        access_log = []
 
-    # Shared lifecycle retains construction/loader failures and the full original request.
-    def prepare(value):
-        return prepare_backtest(value, access_log, invocation)
+        # Shared lifecycle retains loader failures and the original request.
+        def prepare(value):
+            return prepare_backtest(value, access_log, writer)
 
-    try:
         return run_batch_cli(
             config,
             raw,
@@ -409,11 +445,8 @@ def backtest(
             report=report,
             prepare=prepare,
             access_log=access_log,
-            invocation=invocation,
+            invocation=writer,
         )
-    finally:
-        if owns_invocation:
-            invocation.close()
 
 
 def load_request(path):
@@ -432,7 +465,9 @@ def load_request(path):
         raise
 
 
-def retain_input_failure(path, out_dir, command, error, invocation: DiagnosticWriter | None = None):
+def retain_input_failure(
+    path, out_dir, command, error, invocation: DiagnosticWriter | None = None
+):
     config = {
         "input_path": str(path),
         "input_sha256": getattr(error, "input_sha256", None),

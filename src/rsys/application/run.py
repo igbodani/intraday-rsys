@@ -17,6 +17,8 @@ from rsys.application.results import summarize_runner
 from rsys.application.session_config import validate
 from rsys.research.diagnostics import (
     DiagnosticWriter,
+    atomic_write_json,
+    invocation_scope,
     protect_evidence_write,
     start_invocation,
 )
@@ -50,10 +52,7 @@ def run_synthetic_session(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, default=_json_default),
-        encoding="utf-8",
-    )
+    atomic_write_json(path, value, default=_json_default)
 
 
 def run_cli_entry(
@@ -63,6 +62,11 @@ def run_cli_entry(
     report: bool = False,
     invocation: DiagnosticWriter | None = None,
 ) -> tuple[dict[str, Any], str, Path, Path]:
+    with invocation_scope(out_dir, command="run", invocation=invocation) as writer:
+        return _run_cli_entry(config_path, out_dir, report=report, invocation=writer)
+
+
+def _run_cli_entry(config_path, out_dir, *, report, invocation):
     """Retain every invocation, including unreadable/invalid input and partial runs."""
     import hashlib
 
@@ -88,6 +92,7 @@ def run_cli_entry(
                 else "run config is not valid JSON/object"
             )
             config = {"input_unavailable_or_invalid": True}
+        invocation.use_config(config)
         invocation.record_identity(
             input_path=str(config_path),
             input_sha256=hashlib.sha256(raw).hexdigest() if raw is not None else None,
@@ -117,7 +122,6 @@ def run_cli_entry(
             except BaseException as exc:
                 invocation.fail(exc, stage="preparing")
                 raise
-            invocation.link_run(record.run_id)
             attempt = out_dir / "attempts" / record.run_id
             trace_path, manifest_path = (
                 attempt / "trace.jsonl",
@@ -127,8 +131,9 @@ def run_cli_entry(
             try:
                 # Inside the fail()-covered try: a collision/permission failure here
                 # must still leave a FAILURE event, never an invocation stuck "resolved".
-                attempt.mkdir(parents=True, exist_ok=False)
                 with run_context(storage, record):
+                    invocation.link_run(record.run_id)
+                    attempt.mkdir(parents=True, exist_ok=False)
                     manifest = {
                         "schema_version": 2,
                         "evidence_type": "synthetic_standalone",
@@ -144,6 +149,7 @@ def run_cli_entry(
                         "scanner_basis": "supplied_synthetic_scores",
                         "account_basis": "synthetic_immediate_settlement",
                         "completion_policy": "required_exits_or_finite_input_snapshot",
+                        "diagnostics_version": 1,
                     }
                     try:
                         if error is not None:
@@ -194,6 +200,11 @@ def run_cli_entry(
                         record.metrics = json.loads(
                             json.dumps(summary["metrics"], default=_json_default)
                         )
+                    except BaseException as exc:
+                        # Record the execution failure before finally seals the
+                        # journal. Outer handlers deduplicate this exception.
+                        invocation.fail(exc)
+                        raise
                     finally:
                         rows = runner.trace if runner is not None else []
                         trace_text = "".join(
@@ -230,16 +241,25 @@ def run_cli_entry(
                             record.decision_gate_status["manifest_sha256"] = (
                                 hashlib.sha256(manifest_path.read_bytes()).hexdigest()
                             )
-                            invocation.artifacts_ready(stage=invocation.stage)
+                            if report and manifest["status"] == "success":
+                                report_path = render_report_for_attempt(attempt)
+                                record.artifacts.append(str(report_path))
+                            if manifest["status"] == "success":
+                                invocation.artifacts_ready(stage=invocation.stage)
+                            record.decision_gate_status["diagnostics"] = json.dumps(
+                                invocation.seal(), sort_keys=True
+                            )
 
                         protect_evidence_write(
                             _finalize_evidence, catch=(DiagnosticWriteError, OSError)
                         )
-                    if report:
-                        report_path = render_report_for_attempt(attempt)
-                        record.artifacts.append(str(report_path))
             except BaseException as exc:
-                invocation.fail(exc, stage="resolved")
+                exc.run_id, exc.trace_path, exc.manifest_path = (
+                    record.run_id,
+                    trace_path,
+                    manifest_path,
+                )
+                invocation.fail(exc)
                 raise
             return summary, record.run_id, trace_path, manifest_path
         finally:

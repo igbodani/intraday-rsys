@@ -1,6 +1,6 @@
 # Backtest readiness: agent to-do and delivery plan
 
-**Status: specifications, not implemented features.** Prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its verified source tree has 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
+**Status: BR-00/BR-01 implemented; BR-02–BR-08 remain planned.** See the [BR-01 verification handoff](BR01_VERIFICATION.md) for the reviewed behavior, current checks and remaining limits. This plan was prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its historical baseline was 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
 
 ## Goal and reading order
 
@@ -24,7 +24,7 @@ The existing [Copilot roles and skills](../COPILOT_WORKFLOW.md) remain authorita
 | Sealed attempts, failures, comparisons and HTML reports | `research/storage.py`, `research/experiments.py`, `research/comparison.py`, `reporting/html.py` |
 | Fixes to historical comparison axes, timestamps, duplicate bars and fixture trade conditions | [Pre-data audit](../PRE_DATA_VALIDATION.md) and its regression tests |
 
-Do not rebuild these systems. Current limitations matter: evidence is largely written at completion; `run_batch_cli()` prepares historical inputs before creating its research record; source hashes and resolved inputs are immutable once a record exists; scanner snapshots repeat minute evidence; real provider responses and large workloads remain unverified. Recovery exists as a storage service, not a complete operator-facing diagnostic workflow.
+Do not rebuild these systems. BR-01 now saves operational invocation evidence before preparation and seals diagnostics at finalization. The trading trace is still largely written at completion; `run_batch_cli()` prepares historical inputs before creating its research record; source hashes and resolved inputs are immutable once a record exists; scanner snapshots repeat minute evidence; real provider responses and large workloads remain unverified. Recovery exists as a storage service, not a complete operator-facing diagnostic workflow.
 
 ## Ordered to-do
 
@@ -106,10 +106,10 @@ For a multi-ticket request, still implement and verify one bounded slice at a ti
 
 ## Publication and completion
 
-This branch contains specifications and a prompt, not implementation of the proposed interfaces. The owner will pull it and use Copilot to implement. Future feature branches should start from this plan branch or a descendant containing it; after the plan is merged, start from the updated `develop`. Use one focused PR per ticket or tightly coupled slice. Do not merge or run live acquisition merely because a planning document says they are later steps.
+This branch now contains the specifications, prompt and BR-01 implementation. The remaining interfaces are proposed until their tickets pass. Future feature branches should start from this branch or a descendant containing it; after it is merged, start from the updated `develop`. Use one focused PR per ticket or tightly coupled slice. Do not merge or run live acquisition merely because a planning document says they are later steps.
 
 Every ticket handoff must include its ID, base/head or working-tree scope, changed files, design/compatibility decisions, tests actually run, evidence paths, supported failures, review result and remaining owner dependencies. Store generated runs and credentials outside Git. Passing this pack's structural checks proves its references/metadata are valid, not that the proposed logging features already work.
 
-## Specification-pack verification
+## Original specification-pack verification (historical)
 
 The delivered documentation/prompt diff passed the Copilot metadata/local-link checker, Ruff and `git diff --check`. All **937 existing offline tests passed in 121.82 seconds** with the frozen environment. A document consistency check verified nine unique tickets, 24 acceptance scenarios, balanced code fences and 25 existing test-file references. Application source, runtime tests, dependencies and fixture/config inputs are unchanged. No proposed ticket is marked implemented, and no provider call or download was performed while preparing this pack.
