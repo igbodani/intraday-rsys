@@ -371,6 +371,11 @@ class DiagnosticWriter:
         self._record.stage = _STAGE_RESOLVED
         self._write_invocation()
 
+    def link_preflight_attempt(self, manifest_path: str) -> None:
+        self._record.linked_preflight_attempt = manifest_path
+        self._record.stage = _STAGE_RESOLVED
+        self._write_invocation()
+
     @property
     def linked_run_id(self) -> str | None:
         return self._record.linked_run_id

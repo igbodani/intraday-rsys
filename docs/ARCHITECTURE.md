@@ -111,3 +111,13 @@ uv run rsys run --config fixtures/sessions_trade_fixture.json --out runs/trade -
 Verified: **763 tests pass**, Ruff is clean, and all **25 public CLI invocations** return their expected exits. All **18 generated semantic traces** match revision `dab3185` exactly, with unchanged account metrics. The wheel build includes all nine model namespaces and the public compatibility entry points. Historical inputs, provider semantics, full equal-timestamp trade execution and final-evaluation enablement remain outside this change.
 
 The initial historical boundary is `application/historical.py`: separate acquisition and offline replay commands, before-read date authorization, and explicit final-bar timing/action-review conventions. `data/alpaca.py` handles network requests only during acquisition; `data/bar_cache.py` stores and verifies request-scoped immutable snapshots. See [ALPACA_LOCAL_BACKTEST.md](ALPACA_LOCAL_BACKTEST.md). The adapter is not yet credential-tested or a complete provider coverage audit.
+
+## Offline data preflight
+
+`application/historical.py` owns the shared authorization/identity plan and resolved
+input composition. `HistoricalDataPlan` lives in `application/models.py`. Both
+`backtest` and `application/preflight.py` reuse those functions, `BarCache.load` and
+`validate_batch`; preflight never constructs a runner or strategy. Its JSON and
+`reporting/preflight.py` HTML are sealed under a file-only manifest, linked from the
+early invocation and inspected/recovered by the existing research services. It
+creates no SQLite research trial. See [DATA_PREFLIGHT.md](DATA_PREFLIGHT.md).

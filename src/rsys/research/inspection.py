@@ -229,14 +229,17 @@ def _read_status(root, identity):
     if outcome == "failed" and progress.get("failure_type") == "KeyboardInterrupt":
         outcome = "interrupted"
     completeness = "partial"
-    if state.linked_download_attempt:
+    if state.linked_download_attempt or state.linked_preflight_attempt:
+        if state.linked_download_attempt and state.linked_preflight_attempt:
+            raise InspectionError("multiple file attempts linked to one invocation")
+        kind = "preflights" if state.linked_preflight_attempt else "downloads"
         # Download directories may be moved as a whole: use the retained ID,
         # never trust an arbitrary absolute path from an invocation file.
-        saved = Path(state.linked_download_attempt)
-        if saved.name != "manifest.json" or saved.parent.parent.name != "downloads":
+        saved = Path(state.linked_preflight_attempt or state.linked_download_attempt)
+        if saved.name != "manifest.json" or saved.parent.parent.name != kind:
             raise InspectionError("invalid download manifest path")
         download_id = _validate_run_id(saved.parent.name)
-        manifest_path = _path(root, "downloads", download_id, "manifest.json")
+        manifest_path = _path(root, kind, download_id, "manifest.json")
         paths["manifest"] = str(manifest_path)
         if manifest_path.exists():
             manifest = _json(manifest_path)
@@ -263,6 +266,16 @@ def _read_status(root, identity):
                 if seal.get("invocation_id") != state.invocation_id:
                     raise InspectionError("download invocation mismatch")
                 verify_diagnostic_seal(root, seal)
+                if kind == "preflights":
+                    artifacts = manifest.get("artifacts", {})
+                    if set(artifacts) != {"preflight.json", "report.html"}:
+                        raise InspectionError("invalid preflight artifact inventory")
+                    for name, expected in artifacts.items():
+                        artifact = _path(root, kind, download_id, name)
+                        if _optional_hash(artifact) != expected:
+                            raise InspectionError(
+                                "preflight artifact integrity mismatch"
+                            )
                 completeness = "complete"
         elif outcome not in ("failed", "interrupted"):
             outcome = "running"

@@ -1,6 +1,6 @@
 # Backtest readiness: agent to-do and delivery plan
 
-**Status: BR-00–BR-03 implemented; BR-04–BR-08 remain planned.** See the [BR-01 handoff](BR01_VERIFICATION.md), [BR-02 streaming verification](BR02_VERIFICATION.md) and [BR-03 operator verification](BR03_VERIFICATION.md) for reviewed behavior, checks and limits. This plan was prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its historical baseline was 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
+**Status: BR-00–BR-04 implemented; BR-05–BR-08 remain planned.** See the [BR-01 handoff](BR01_VERIFICATION.md), [BR-02 streaming verification](BR02_VERIFICATION.md), [BR-03 operator verification](BR03_VERIFICATION.md) and [BR-04 data preflight verification](BR04_VERIFICATION.md) for reviewed behavior, checks and limits. This plan was prepared on 2026-11-03 for `docs/copilot-backtest-readiness`, based on `develop` commit `a40c91260afc81b0ed79d5e4a87000c85c24f30d`. PR #4 is merged into that base. Its historical baseline was 937 passing offline tests; agents must establish their own checkout baseline rather than copying that count as new evidence.
 
 ## Goal and reading order
 
@@ -36,7 +36,7 @@ Mark a box only after its acceptance tests and required review pass. A skipped l
 | [x] | BR-01 | Safe append-only operational journal and early invocation record | Python engineer / adversarial reviewer | BR-00 |
 | [x] | BR-02 | Streaming semantic trace and interrupted-run evidence | Python engineer / adversarial reviewer | BR-01 |
 | [x] | BR-03 | Progress, status, recovery and useful failure/no-trade explanations | Python engineer / adversarial reviewer | BR-02 |
-| [ ] | BR-04 | Offline pinned-data preflight and resource inventory | Python engineer / quant researcher + reviewer | BR-01; integrate with BR-03 |
+| [x] | BR-04 | Offline pinned-data preflight and resource inventory | Python engineer / quant researcher + reviewer | BR-01; integrate with BR-03 |
 | [ ] | BR-05 | Opt-in provider validation harness and operator checklist | Python engineer + quant researcher / reviewer | BR-03, BR-04 |
 | [ ] | BR-06 | Finite experiment plans, complete attempt registry and comparison scorecard | Architect + engineer / quant researcher + reviewer | BR-03, BR-04 |
 | [ ] | BR-07 | First real-data reconciliation and controlled ORB/VWAP study | Owner + quant researcher / reviewer | BR-05 real-data gate, BR-06, explicit research settings |
@@ -113,3 +113,8 @@ Every ticket handoff must include its ID, base/head or working-tree scope, chang
 ## Original specification-pack verification (historical)
 
 The delivered documentation/prompt diff passed the Copilot metadata/local-link checker, Ruff and `git diff --check`. All **937 existing offline tests passed in 121.82 seconds** with the frozen environment. A document consistency check verified nine unique tickets, 24 acceptance scenarios, balanced code fences and 25 existing test-file references. Application source, runtime tests, dependencies and fixture/config inputs are unchanged. No proposed ticket is marked implemented, and no provider call or download was performed while preparing this pack.
+
+BR-04 measured substantial scanner-evidence growth on small synthetic workloads.
+Track [BR-04-F01 evidence compaction](evidence-compaction-followup.md) separately;
+keep real-data pilots bounded before scaling experiments. BR-05 software can be
+built without credentials; its live check still requires explicit access and inputs.

@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 from rsys.application.batch import run_batch_cli, write_json
+from rsys.application.batch_config import validate_batch
 from rsys.application.dataset_policy import DatasetPolicy
 from rsys.application.errors import RunConfigError
+from rsys.application.models import HistoricalDataPlan
 from rsys.application.session_config import fields, integer
 from rsys.data.alpaca import AlpacaBarsClient
 from rsys.data.bar_cache import BarCache, request_identity
@@ -232,7 +235,8 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
             invocation.close()
 
 
-def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
+def plan_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
+    """Authorize the entire execution/search budget before any cache inspection."""
     required = {
         "schema_version",
         "cache",
@@ -254,7 +258,11 @@ def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = N
         raise ValueError("Explicit final_bars_modeled_at_end acknowledgement required")
     spec = _source(config)
     policy = DatasetPolicy(config["partitions"], config["purpose"])
+    if not isinstance(config["sessions"], list):
+        raise TypeError("Backtest sessions must be a list")
     days = [date.fromisoformat(d) for d in config["sessions"]]
+    if [d.isoformat() for d in days] != config["sessions"]:
+        raise ValueError("Backtest sessions require canonical dates")
     if not days or days != sorted(set(days)):
         raise ValueError("Backtest sessions must be nonempty, unique and ordered")
     scan = config["scanner"]
@@ -267,11 +275,12 @@ def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = N
     }
     fields(scan, scan_keys, scan_keys)
     maximum = integer(scan["max_lookback_calendar_sessions"], minimum=1)
-    required_days = set(days)
+    warmup_days = set()
     for day in days:
-        required_days.update(
+        warmup_days.update(
             candidate_prior_session_dates(day, max_lookback_calendar_sessions=maximum)
         )
+    required_days = set(days) | warmup_days
     try:
         for day in sorted(required_days):
             try:
@@ -285,6 +294,12 @@ def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = N
                         level="error",
                     )
                 raise
+            if invocation is not None:
+                invocation.event(
+                    DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+                    "preparing",
+                    details={"date": day.isoformat()},
+                )
     finally:
         access_log.extend(policy.log)
     if invocation is not None:
@@ -313,21 +328,32 @@ def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = N
         d.isoformat() for d in required_days
     }:
         raise ValueError("Pin exactly one cache object per execution/warmup date")
-    cache = BarCache(config["cache"])
-    # Every date is authorized before the first dataset or alias is opened.
-    loaded = {
-        day: cache.load(
-            config["objects"][day.isoformat()],
-            request_identity(spec["symbol"], day, spec["feed"], spec["asof"]),
-        )
-        for day in sorted(required_days)
-    }
-    if invocation is not None:
-        invocation.event(
-            DiagnosticEventCode.CACHE_READ,
-            "preparing",
-            details={"loaded_dates": len(loaded)},
-        )
+    return HistoricalDataPlan(
+        config,
+        tuple(days),
+        frozenset(warmup_days),
+        {
+            day: request_identity(spec["symbol"], day, spec["feed"], spec["asof"])
+            for day in sorted(required_days)
+        },
+    )
+
+
+def open_backtest_cache(plan):
+    """Resolve equivalent path spellings only after all dates were authorized.
+
+    Keep historical comparison provenance compatible with the previous loader,
+    without inspecting a cache path in load_request before policy checks.
+    """
+    cache = BarCache(plan.config["cache"])
+    config = {**plan.config, "cache": str(cache.root)}
+    return replace(plan, config=config), cache
+
+
+def compose_backtest(plan, loaded, access_log):
+    """Build the same dated inputs for execution and offline eligibility checking."""
+    config, days = plan.config, plan.execution_dates
+    spec, scan = config["dataset"], config["scanner"]
     account = config["account"]
     keys = {
         "initial_cash",
@@ -423,11 +449,29 @@ def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = N
             "history": {spec["symbol"]: history},
         },
     )
+    validate_batch(result, allow_historical=True)
+    return result
+
+
+def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
+    plan = plan_backtest(config, access_log, invocation)
+    plan, cache = open_backtest_cache(plan)
+    loaded = {
+        day: cache.load(config["objects"][day.isoformat()], request)
+        for day, request in plan.requests.items()
+    }
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.CACHE_READ,
+            "preparing",
+            details={"loaded_dates": len(loaded)},
+        )
+    result = compose_backtest(plan, loaded, access_log)
     if invocation is not None:
         invocation.event(
             DiagnosticEventCode.DATASET_COMPLETE,
             "preparing",
-            details={"session_count": len(sessions)},
+            details={"session_count": len(result["sessions"])},
         )
     return result
 
@@ -468,7 +512,7 @@ def load_request(path):
         if not isinstance(config, dict):
             raise TypeError("Expected a JSON object")
         if isinstance(config.get("cache"), str):
-            config["cache"] = str((path.parent / config["cache"]).resolve())
+            config["cache"] = str(path.parent / config["cache"])
         return config, raw
     except Exception as exc:
         exc.input_sha256 = hashlib.sha256(raw).hexdigest() if raw is not None else None

@@ -11,12 +11,13 @@ Implemented scope: one explicitly chosen stock per request, SIP or IEX one-minut
 5. Download the execution dates **and all scanner lookback dates**. The current loader conservatively requires the entire declared calendar search window, not just whichever dates happen to have data. The download manifest lists each date, immutable object ID and coverage gaps. A completed download can still have missing coverage; this is not silently called complete market data.
 6. Copy those date/object-ID pairs into backtest `objects`. Pin exactly the required execution/warmup dates. Choose explicit scanner settings, account/execution policies and a flatten time compatible with every selected session. The example 12:55 works within regular and early-close sessions but is an editable example, not a researched exit policy.
 7. Record an action review covering every execution and warmup date: `status: verified_none`, a nonempty `source`, `start` and `end`. This records your attestation; the app does not independently audit it. If splits/dividends/other actions occur, use another reviewed window or wait for action handling. The pending template cannot run.
-8. Run the backtest. This command never creates an HTTP client or reads credentials. It validates pinned cache content and reuses the existing scanner, strategies, risk, execution and report pipeline.
+8. Run `rsys check-data` with the same request first; inspect its [coverage and resource report](DATA_PREFLIGHT.md). Then run the backtest. This command never creates an HTTP client or reads credentials. It validates pinned cache content and reuses the existing scanner, strategies, risk, execution and report pipeline.
 
 ```bash
 uv run rsys download --config configs/my_download.json --out runs/acquisition
 # Repeating skips already cached requests; refresh preserves the previous objects:
 uv run rsys download --config configs/my_download.json --out runs/acquisition --refresh
+uv run rsys check-data --config configs/my_backtest.json --out runs/data-checks
 uv run rsys backtest --config configs/my_backtest.json --out runs/historical --report
 uv run rsys compare --storage-root runs/historical --runs ID_A ID_B --out runs/comparison
 # For a declared entry/exit setting change, with other assumptions held equal:

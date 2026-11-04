@@ -37,7 +37,7 @@ Inspection is read-only, including its SQLite connection. It does not create a
 missing database, repair a partial file or append events. It reports:
 
 - The authoritative outcome: SQLite for a resolved run; a final manifest for a
-  download; operational preparation/failure state before resolution.
+  download or offline data preflight; operational preparation/failure state before resolution.
 - Evidence completeness, separately from the outcome. `complete` means verified
   completed software evidence, not full trading-day coverage. `partial` is
   incomplete work. Old evidence can be labelled `legacy_unverified` or `unverified`.
@@ -120,3 +120,6 @@ a usable next reference remain nonzero failures.
 Legacy reports without a funnel say it is unavailable. Semantic trading trace bytes,
 entry/exit decisions, as-of data rules, fees and account calculations are unchanged.
 See [BR-03 verification](agent-workflow/BR03_VERIFICATION.md) for tests and limits.
+
+The offline `check-data` command shares status/recovery but never creates a strategy
+run. See [data preflight](DATA_PREFLIGHT.md) for its reports, exits and resource limits.

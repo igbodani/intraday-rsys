@@ -221,6 +221,7 @@ class InvocationRecord(BaseModel):
     input_sha256: str | None = None
     linked_run_id: str | None = None
     linked_download_attempt: str | None = None
+    linked_preflight_attempt: str | None = None
     owner_pid: int | None = None
     owner_host: str | None = None
     ended_at: str | None = None

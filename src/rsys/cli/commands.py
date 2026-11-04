@@ -339,6 +339,32 @@ def _cmd_data(args):
     return EXIT_SUCCESS
 
 
+def _cmd_check_data(args):
+    from rsys.application.preflight import check_data
+
+    try:
+        result, manifest = check_data(None, args.out, input_path=args.config)
+    except Exception as exc:  # noqa: BLE001 -- retained local input/evidence failures
+        print(
+            f"error: {type(exc).__name__}: {getattr(exc, 'diagnostic_message', 'Unable to complete data preflight')}",
+            file=sys.stderr,
+        )
+        _print_attempt_paths(exc)
+        return (
+            EXIT_OTHER_FAILURE
+            if isinstance(exc, (OSError, DiagnosticWriteError))
+            else EXIT_DATA_ERROR
+        )
+    print(f"can_execute: {str(result['can_execute']).lower()}")
+    print(
+        f"history_coverage_complete: {str(result['history_coverage_complete']).lower()}"
+    )
+    print(f"warnings: {len(result['warnings'])}")
+    print(f"manifest: {manifest}")
+    print(f"report: {manifest.parent / 'report.html'}")
+    return EXIT_SUCCESS if result["can_execute"] else EXIT_DATA_ERROR
+
+
 def _cmd_inspect(args):
     try:
         if args.command == "status":
@@ -486,6 +512,14 @@ def build_parser() -> argparse.ArgumentParser:
             default="auto",
             help="Human progress on stderr (auto: interactive terminals only)",
         )
+
+    preflight = subparsers.add_parser(
+        "check-data",
+        help="Check pinned historical data locally without downloading or simulating",
+    )
+    preflight.add_argument("--config", required=True)
+    preflight.add_argument("--out", required=True)
+    preflight.set_defaults(func=_cmd_check_data)
 
     status = subparsers.add_parser(
         "status", help="Inspect an invocation or run without changing it"

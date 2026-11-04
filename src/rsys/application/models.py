@@ -26,6 +26,14 @@ from rsys.data.timestamps import parse_utc_timestamp_ns
 from rsys.execution.models import DecisionRecord, FillRecord
 
 
+@dataclass(frozen=True)
+class HistoricalDataPlan:
+    config: dict
+    execution_dates: tuple[date, ...]
+    warmup_dates: frozenset[date]
+    requests: dict[date, dict]
+
+
 @dataclass
 class SessionFunnel:
     session_date: str

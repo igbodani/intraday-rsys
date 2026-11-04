@@ -158,6 +158,10 @@ class BarCache:
             raise ValueError("Cached normalization/coverage mismatch")
         return payload
 
+    def object_size(self, identity, request):
+        """Actual pinned object bytes, excluding aliases and unrelated objects."""
+        return self._path("objects/" + digest(request), identity).stat().st_size
+
     def acquire(self, request, client, *, refresh=False):
         index = self._path("requests", digest(request))
         if index.exists() and not refresh:
