@@ -340,20 +340,19 @@ def test_recover_crashed_runs_does_not_touch_finalized_runs(tmp_path):
     assert storage.load_record(record.run_id).status == "success"
 
 
-def test_recover_crashed_runs_marks_a_run_with_no_live_owner_as_crashed(tmp_path):
+def test_recover_crashed_runs_leaves_unknown_ownership_unresolved(tmp_path):
     storage = _storage(tmp_path)
     record = start_run(storage, hypothesis="h", phase="M0", resolved_config={}, **NO_DATA)
     record.status = "running"
-    record.owner_pid = None  # unknown/legacy owner: cannot be verified alive
+    record.owner_pid = None  # unknown/legacy owner: not proof of a crash
     storage.write_record(record)
 
     recovered_ids = storage.recover_crashed_runs(reason="test harness simulated crash")
 
-    assert record.run_id in recovered_ids
+    assert record.run_id not in recovered_ids
     reloaded = storage.load_record(record.run_id)
-    assert reloaded.status == "crashed"
-    assert reloaded.ended_at is not None
-    assert "recovered" in reloaded.error
+    assert reloaded.status == "running"
+    assert reloaded.ended_at is None
 
 
 def test_recovery_lock_rejects_a_concurrent_sweep(tmp_path):
@@ -387,6 +386,7 @@ def _mp_child_crash(root_dir: str, queue: multiprocessing.Queue) -> None:
     )
     record.status = "running"
     record.owner_pid = __import__("os").getpid()
+    record.owner_host = __import__("socket").gethostname()
     storage.write_record(record)
     queue.put(record.run_id)
     # Process exits here without ever finalizing -- simulates a crash.
@@ -400,6 +400,7 @@ def _mp_child_stay_alive(root_dir: str, queue: multiprocessing.Queue, sleep_seco
     )
     record.status = "running"
     record.owner_pid = __import__("os").getpid()
+    record.owner_host = __import__("socket").gethostname()
     storage.write_record(record)
     queue.put(record.run_id)
     time.sleep(sleep_seconds)

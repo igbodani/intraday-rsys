@@ -4,6 +4,11 @@ Implemented scope: one explicitly chosen stock per request, SIP or IEX one-minut
 
 ## Workflow
 
+For one bounded development sample, [the validation command](ALPACA_PROVIDER_VALIDATION.md)
+now composes acquisition, preflight, cache-reuse proof and a network-blocked backtest.
+It requires explicit enablement and retains a checklist of verified/unverified evidence.
+The lower-level commands below remain available with their existing behavior.
+
 1. Copy `configs/alpaca_download.example.json` and `configs/alpaca_backtest.example.json`. They deliberately contain blocked settings rather than silently approve feed, date partitions, liquidity/freshness thresholds or action coverage.
 2. Choose your entitled `sip` or `iex` feed. Keep it identical for current and historical bars. The example `asof: "-"` explicitly disables symbol remapping; a canonical date opts into Alpaca entity mapping. This is not an arrival-time or corporate-action cutoff.
 3. Declare non-overlapping date partitions using `{"name":"development"|"validation"|"final", "start":"YYYY-MM-DD", "end":"YYYY-MM-DD"}`. No split percentages or dates are automatically assigned. Development can read only development dates; validation can read development and validation dates; final and undeclared dates are always denied. Both acquisition and replay preflight all requested trading dates before any data/cache read. These are user-declared policy boundaries, not protection against an operator deliberately rewriting the policy.
@@ -11,12 +16,13 @@ Implemented scope: one explicitly chosen stock per request, SIP or IEX one-minut
 5. Download the execution dates **and all scanner lookback dates**. The current loader conservatively requires the entire declared calendar search window, not just whichever dates happen to have data. The download manifest lists each date, immutable object ID and coverage gaps. A completed download can still have missing coverage; this is not silently called complete market data.
 6. Copy those date/object-ID pairs into backtest `objects`. Pin exactly the required execution/warmup dates. Choose explicit scanner settings, account/execution policies and a flatten time compatible with every selected session. The example 12:55 works within regular and early-close sessions but is an editable example, not a researched exit policy.
 7. Record an action review covering every execution and warmup date: `status: verified_none`, a nonempty `source`, `start` and `end`. This records your attestation; the app does not independently audit it. If splits/dividends/other actions occur, use another reviewed window or wait for action handling. The pending template cannot run.
-8. Run the backtest. This command never creates an HTTP client or reads credentials. It validates pinned cache content and reuses the existing scanner, strategies, risk, execution and report pipeline.
+8. Run `rsys check-data` with the same request first; inspect its [coverage and resource report](DATA_PREFLIGHT.md). Then run the backtest. This command never creates an HTTP client or reads credentials. It validates pinned cache content and reuses the existing scanner, strategies, risk, execution and report pipeline.
 
 ```bash
 uv run rsys download --config configs/my_download.json --out runs/acquisition
 # Repeating skips already cached requests; refresh preserves the previous objects:
 uv run rsys download --config configs/my_download.json --out runs/acquisition --refresh
+uv run rsys check-data --config configs/my_backtest.json --out runs/data-checks
 uv run rsys backtest --config configs/my_backtest.json --out runs/historical --report
 uv run rsys compare --storage-root runs/historical --runs ID_A ID_B --out runs/comparison
 # For a declared entry/exit setting change, with other assumptions held equal:

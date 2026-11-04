@@ -10,13 +10,19 @@ from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from rsys.research.errors import CompareCliError, RunNotFoundError
+from rsys.research.diagnostics import verify_diagnostic_seal
+from rsys.research.errors import (
+    CompareCliError,
+    DiagnosticIntegrityError,
+    RunNotFoundError,
+)
 from rsys.research.evaluation import compare_runs
 from rsys.research.models import (
     HISTORICAL_SCANNER_PROFILE_VERSION,
     SyntheticRunAssumptions,
 )
 from rsys.research.storage import RunStorage, _validate_run_id
+from rsys.research.trace import file_sha256, verify_streamed_artifacts
 
 
 def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
@@ -57,12 +63,32 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
         != hashlib.sha256(raw).hexdigest()
     ):
         raise CompareCliError("manifest integrity mismatch")
+    if "diagnostics_version" in manifest:
+        try:
+            if manifest["diagnostics_version"] != 1:
+                raise DiagnosticIntegrityError("unsupported diagnostic evidence")
+            verify_diagnostic_seal(
+                storage_root,
+                json.loads(record.decision_gate_status.get("diagnostics", "{}")),
+                run_id=run_id,
+            )
+        except (DiagnosticIntegrityError, ValueError, TypeError) as exc:
+            raise CompareCliError(str(exc)) from exc
     try:
-        trace_hash = hashlib.sha256((attempt / "trace.jsonl").read_bytes()).hexdigest()
+        trace_hash = file_sha256(attempt / "trace.jsonl")
     except OSError as exc:
         raise CompareCliError("trace is missing") from exc
     if trace_hash != manifest.get("semantic_trace_hash"):
         raise CompareCliError("trace integrity mismatch")
+    if "trace_version" in manifest:
+        try:
+            if manifest.get("trace_complete") is not True:
+                raise DiagnosticIntegrityError("incomplete streamed trace")
+            verify_streamed_artifacts(attempt, manifest)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise CompareCliError(
+                f"streamed evidence integrity failure: {exc}"
+            ) from exc
     if manifest["schema_version"] == 3:
         hashes = manifest.get("artifact_hashes", {})
         required = {
@@ -90,7 +116,7 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
             if path.is_absolute() or ".." in path.parts or "\\" in name:
                 raise CompareCliError("invalid artifact path")
             try:
-                actual = hashlib.sha256((attempt / name).read_bytes()).hexdigest()
+                actual = file_sha256(attempt / name)
             except OSError as exc:
                 raise CompareCliError("retained artifact is missing") from exc
             if actual != expected:

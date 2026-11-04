@@ -21,6 +21,7 @@ import ctypes
 import hashlib
 import json
 import os
+import socket
 import sqlite3
 import sys
 import uuid
@@ -31,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 if sys.platform.startswith("win"):
+    import msvcrt
     from ctypes import wintypes
 
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -41,6 +43,9 @@ if sys.platform.startswith("win"):
         wintypes.HANDLE,
         ctypes.POINTER(wintypes.DWORD),
     )
+
+if not sys.platform.startswith("win"):
+    import fcntl
 
 from rsys.research.errors import (
     FrozenFieldError,
@@ -143,11 +148,13 @@ def _pid_is_alive(pid: int) -> bool:
         still_active = 259
         handle = _kernel32.OpenProcess(process_query_limited_information, False, pid)
         if not handle:
-            return False
+            # ERROR_INVALID_PARAMETER means no such PID. Access denied and
+            # other query failures are not proof of process death.
+            return ctypes.get_last_error() != 87
         try:
             exit_code = wintypes.DWORD()
             if not _kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return False
+                return True
             return exit_code.value == still_active
         finally:
             _kernel32.CloseHandle(handle)
@@ -223,14 +230,23 @@ _RUN_COLUMNS = (
 
 
 class RunStorage:
-    def __init__(self, root_dir: str | Path):
+    def __init__(self, root_dir: str | Path, *, read_only: bool = False):
         self.root_dir = Path(root_dir)
-        self.root_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.root_dir / "runs.db"
-        self._conn = sqlite3.connect(self.db_path, isolation_level=None, timeout=30)
+        if read_only:
+            self._conn = sqlite3.connect(
+                self.db_path.resolve().as_uri() + "?mode=ro",
+                uri=True,
+                isolation_level=None,
+                timeout=30,
+            )
+            self._conn.execute("PRAGMA query_only = ON")
+        else:
+            self.root_dir.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self.db_path, isolation_level=None, timeout=30)
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.executescript(_SCHEMA)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.executescript(_SCHEMA)
 
     def close(self) -> None:
         self._conn.close()
@@ -370,55 +386,26 @@ class RunStorage:
     def recover_crashed_runs(
         self, reason: str = "process ended without a clean status transition"
     ) -> list[str]:
-        """Mark every 'running' run whose owning process is actually dead as 'crashed'.
-        A run with a live owner is left untouched -- recovery must never mark a live run crashed.
+        """Recover confirmed-dead local owners; terminal/remote/unknown owners stay intact."""
+        with recovery_lock(self.root_dir):
+            return self._recover_dead_runs(self.list_run_ids(), reason=reason)
 
-        Ownership/liveness checks are local-host only (`os.kill`/`OpenProcess` by PID): this
-        cannot and does not infer whether a *remote* host's owning process has died. The lock
-        file below carries its holder's PID so a stale lock left by a sweep that crashed before
-        releasing it can be detected and reclaimed, rather than blocking all future recovery
-        forever -- but that staleness check is equally local-host-only.
-        """
-        lock_path = self.root_dir / ".recovery.lock"
-        if lock_path.exists():
-            holder_pid = None
-            try:
-                holder_pid = int(lock_path.read_text(encoding="utf-8").strip())
-            except (ValueError, OSError):
-                pass
-            if holder_pid is None or _pid_is_alive(holder_pid):
-                # Unreadable/unknown holder is treated conservatively as still held -- we have
-                # no positive evidence it is safe to reclaim.
-                raise RecoveryInProgressError(
-                    f"a recovery sweep is already in progress: {lock_path}"
-                )
-            lock_path.unlink(
-                missing_ok=True
-            )  # stale lock: holder PID is confirmed dead; reclaim it
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError as exc:
-            raise RecoveryInProgressError(
-                f"a recovery sweep is already in progress: {lock_path}"
-            ) from exc
-        os.write(fd, str(os.getpid()).encode("utf-8"))
-        os.close(fd)
-        try:
-            recovered: list[str] = []
-            for run_id in self.list_run_ids():
-                record = self.load_record(run_id)
-                if record.status != "running":
-                    continue
-                if record.owner_pid is not None and _pid_is_alive(record.owner_pid):
-                    continue
-                record.status = "crashed"
-                record.ended_at = datetime.now(UTC).isoformat()
-                record.error = f"recovered: {reason}"
-                self.write_record(record)
-                recovered.append(run_id)
-            return recovered
-        finally:
-            lock_path.unlink(missing_ok=True)
+    def _recover_dead_runs(self, run_ids, *, reason):
+        """Caller holds recovery_lock; write_record rechecks terminal sealing transactionally."""
+        recovered = []
+        for run_id in run_ids:
+            record = self.load_record(run_id)
+            if (
+                record.status != "running"
+                or owner_state(record.owner_host, record.owner_pid) != "dead"
+            ):
+                continue
+            record.status = "crashed"
+            record.ended_at = datetime.now(UTC).isoformat()
+            record.error = f"recovered: {reason}"
+            self.write_record(record)
+            recovered.append(run_id)
+        return recovered
 
     @staticmethod
     def _check_immutable_fields(current: RunRecord, candidate: RunRecord) -> None:
@@ -449,3 +436,88 @@ class RunStorage:
             raise IllegalTransitionError(
                 f"illegal status transition: {current_status!r} -> {new_status!r}"
             )
+
+
+def owner_state(host, pid):
+    """Only local positive PIDs can be checked; elapsed time is never a death test."""
+    if host != socket.gethostname() or type(pid) is not int or pid <= 0:
+        return "unknown"
+    try:
+        return "alive" if _pid_is_alive(pid) else "dead"
+    except (OSError, OverflowError, ValueError):
+        return "unknown"
+
+
+@contextmanager
+def recovery_lock(root):
+    """OS exclusion protects stale metadata reclamation as well as the sweep.
+
+    The guard inode is persistent: unlinking an advisory-lock file would allow a
+    second process to lock a different inode while the first still owns its lock.
+    Dry-run never enters this context. Old PID metadata remains supported.
+    """
+    guard_path = Path(root) / ".recovery.guard"
+    fd = os.open(guard_path, os.O_RDWR | os.O_CREAT, 0o600)
+    acquired = False
+    try:
+        try:
+            if sys.platform.startswith("win"):
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as exc:
+            raise RecoveryInProgressError(
+                "recovery OS guard already held or unavailable"
+            ) from exc
+        with _recovery_metadata(root):
+            yield
+    finally:
+        if acquired:
+            if sys.platform.startswith("win"):
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+@contextmanager
+def _recovery_metadata(root):
+    """Caller owns the stable OS guard before touching PID metadata."""
+    lock_path = Path(root) / ".recovery.lock"
+    if lock_path.exists():
+        state = "unknown"
+        try:
+            value = json.loads(lock_path.read_text(encoding="utf-8"))
+            # Backwards-compatible local-PID locks from previous releases.
+            host, pid = (
+                (socket.gethostname(), value)
+                if type(value) is int
+                else (value["host"], value["pid"])
+            )
+            state = owner_state(host, pid)
+        except (ValueError, OSError, TypeError, KeyError):
+            pass
+        if state != "dead":
+            raise RecoveryInProgressError(
+                f"recovery lock held or owner unknown: {lock_path}"
+            )
+        lock_path.unlink(missing_ok=True)
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise RecoveryInProgressError(
+            f"recovery already in progress: {lock_path}"
+        ) from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"host": socket.gethostname(), "pid": os.getpid()}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        yield
+    finally:
+        lock_path.unlink(missing_ok=True)

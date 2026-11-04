@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from rsys.account.models import Checkpoint
 from rsys.account.money import amount
+
+TraceSink = Callable[[dict], None]
+
+
+@dataclass(frozen=True)
+class ExecutionObservation:
+    """Immutable observation of an actual call/result; no execution authority."""
+
+    kind: str
+    event_id: str
+    available_at_ms: int
+    symbol: str
+    code: str
+    eligible: bool = False
+    proposed: bool = False
+    reference_id: str | None = None
+
+
+ObservationSink = Callable[[ExecutionObservation], None]
 
 
 @dataclass(frozen=True)

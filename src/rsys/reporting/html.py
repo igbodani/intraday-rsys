@@ -1,6 +1,7 @@
 """Portable HTML report for a retained `rsys run` attempt (docs/M2_IMPLEMENTATION_HANDOFF.md
-step 9, report subset). Reads manifest.json + trace.jsonl only; no external assets or
-network call is required to open the rendered file.
+step 9, report subset). Legacy attempts use manifest/trace files; streamed attempts
+also verify the authoritative run and linked evidence before regeneration. No
+external assets or network call is required to open the rendered HTML file.
 
 Renders legacy synthetic bar runs and version-3 bar/trade session manifests, including
 partial failures. Data-only `rsys replay` attempts use their own evidence format.
@@ -8,12 +9,19 @@ partial failures. Data-only `rsys replay` attempts use their own evidence format
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 from pathlib import Path
 from typing import Any
 
 from rsys.reporting.errors import ReportError
+from rsys.research.comparison import load_run_manifest
+from rsys.research.diagnostics import verify_diagnostic_seal
+from rsys.research.errors import CompareCliError, RunNotFoundError
+from rsys.research.reasons import explain_reason
+from rsys.research.storage import RunStorage
+from rsys.research.trace import read_trace, verify_streamed_artifacts
 
 
 def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -25,6 +33,50 @@ def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]
         raise ReportError(f"cannot read manifest: {manifest_path}") from exc
     except json.JSONDecodeError as exc:
         raise ReportError(f"manifest is not valid JSON: {exc}") from exc
+    if "trace_version" in manifest:
+        try:
+            if not (attempt_dir.parent.parent / "runs.db").is_file():
+                raise ValueError("missing authoritative run outcome")
+            if manifest.get("status") == "success":
+                load_run_manifest(attempt_dir.parent.parent, attempt_dir.name)
+            else:
+                storage = RunStorage(attempt_dir.parent.parent)
+                try:
+                    record = storage.load_record(attempt_dir.name)
+                finally:
+                    storage.close()
+                if (
+                    record.status not in ("failed", "interrupted", "crashed")
+                    or record.decision_gate_status.get("manifest_sha256")
+                    != hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                ):
+                    raise ValueError("attempt has no verified terminal outcome")
+                if (
+                    manifest.get("run_id") != attempt_dir.name
+                    or manifest.get("diagnostics_version") != 1
+                ):
+                    raise ValueError("invalid streamed attempt identity/version")
+                verify_diagnostic_seal(
+                    attempt_dir.parent.parent,
+                    json.loads(record.decision_gate_status.get("diagnostics", "{}")),
+                    run_id=attempt_dir.name,
+                )
+                verify_streamed_artifacts(attempt_dir, manifest)
+            state = read_trace(
+                trace_path, expected_sha256=manifest["semantic_trace_hash"]
+            )
+            return manifest, list(state.records)
+        except (
+            OSError,
+            ValueError,
+            CompareCliError,
+            RunNotFoundError,
+            KeyError,
+            TypeError,
+        ) as exc:
+            raise ReportError(
+                f"incomplete or invalid streamed evidence: {exc}"
+            ) from exc
     try:
         lines = trace_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -92,6 +144,60 @@ def _scanner_details(records: list[dict[str, Any]]) -> str:
             f"<pre>{_esc(json.dumps(r['scanner_evidence'], indent=2, default=str))}</pre></details>"
             for r in rows
         )
+    )
+
+
+def _funnel_table(manifest):
+    funnel = manifest.get("funnel")
+    if not funnel:
+        return "<p>Session funnel unavailable for this older attempt.</p>"
+    columns = (
+        "session_date",
+        "status",
+        "opportunities",
+        "scanner_eligible",
+        "proposals",
+        "acceptances",
+        "entry_fills",
+        "exits",
+    )
+    header = "".join(f"<th>{_esc(c)}</th>" for c in columns)
+    rows = "".join(
+        "<tr>" + "".join(f"<td>{_esc(s[c])}</td>" for c in columns) + "</tr>"
+        for s in funnel["sessions"]
+    )
+    reasons = []
+    for session in funnel["sessions"]:
+        for _, reason in sorted(session["reasons"].items()):
+            refs = "; ".join(
+                f"event {e['event_id']}, symbol {e['symbol']}, journal line {e['journal_sequence']}"
+                for e in reason["examples"]
+            )
+            reasons.append(
+                "<tr>"
+                + "".join(
+                    f"<td>{_esc(v)}</td>"
+                    for v in (
+                        session["session_date"],
+                        reason["stage"],
+                        reason["code"],
+                        reason["count"],
+                        explain_reason(reason["code"]),
+                        refs,
+                    )
+                )
+                + "</tr>"
+            )
+    units = "".join(
+        f"<li>{_esc(k)}: {_esc(v)}</li>" for k, v in funnel["units"].items()
+    )
+    return (
+        f"<h2>Session funnel</h2><ul>{units}</ul>"
+        f"<p>Counts describe observed work only. Failed/interrupted sessions are partial; not_started sessions have no observations. "
+        f"Reason examples refer to diagnostics.jsonl in invocation {_esc(funnel['invocation_id'])}; up to three examples per reason.</p>"
+        f"<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table>"
+        "<table><caption>Observed reasons</caption><thead><tr><th>session</th><th>stage</th><th>code</th><th>count</th><th>explanation</th><th>original evidence</th></tr></thead>"
+        f"<tbody>{''.join(reasons)}</tbody></table>"
     )
 
 
@@ -169,6 +275,7 @@ th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left; }}
 <p>Scanner basis: {_esc(manifest.get("scanner_basis", "unavailable"))}.</p>
 {_metrics_table(metrics)}
 {sessions_table}
+{_funnel_table(manifest)}
 {_decisions_table(records)}
 {_fills_table(records)}
 {_scanner_details(records)}

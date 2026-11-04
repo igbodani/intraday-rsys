@@ -5,19 +5,41 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 from rsys.application.batch import run_batch_cli, write_json
+from rsys.application.batch_config import (
+    _dated_time,
+    _strategy,
+    validate_account_settings,
+    validate_batch,
+)
 from rsys.application.dataset_policy import DatasetPolicy
 from rsys.application.errors import RunConfigError
-from rsys.application.session_config import fields, integer
+from rsys.application.history_config import parse_scanner
+from rsys.application.models import HistoricalDataPlan
+from rsys.application.session_config import fields, integer, ms
 from rsys.data.alpaca import AlpacaBarsClient
 from rsys.data.bar_cache import BarCache, request_identity
-from rsys.data.calendar import EXCHANGE_TZ, is_trading_day
+from rsys.data.calendar import (
+    EXCHANGE_TZ,
+    is_trading_day,
+    session_close_local,
+    session_open_local,
+)
 from rsys.data.history import candidate_prior_session_dates
+from rsys.research.diagnostics import (
+    DiagnosticWriter,
+    invocation_scope,
+    protect_evidence_write,
+    start_invocation,
+)
+from rsys.research.errors import DiagnosticWriteError
 from rsys.research.experiments import redact_secrets
+from rsys.research.models import DiagnosticEventCode
 
 
 def _source(config):
@@ -26,17 +48,45 @@ def _source(config):
     return spec
 
 
-def download(config, out_dir, *, client=None, refresh=False, input_error=None):
+def download(
+    config,
+    out_dir,
+    *,
+    client=None,
+    refresh=False,
+    input_error=None,
+    invocation: DiagnosticWriter | None = None,
+):
+    with invocation_scope(out_dir, command="download", invocation=invocation) as writer:
+        return _download(
+            config,
+            out_dir,
+            client=client,
+            refresh=refresh,
+            input_error=input_error,
+            invocation=writer,
+        )
+
+
+def _download(config, out_dir, *, client, refresh, input_error, invocation):
     out_dir = Path(out_dir)
+    owns_invocation = invocation is None
+    if invocation is None:
+        invocation = start_invocation(out_dir, command="download")
     attempt = out_dir / "downloads" / uuid4().hex
-    attempt.mkdir(parents=True, exist_ok=False)
     report = {
         "status": "failed",
         "input": redact_secrets(config),
         "datasets": [],
         "access_log": [],
     }
+    owns_attempt = False
     try:
+        # A collision/permission failure still belongs to this invocation, but
+        # never permits replacing evidence in an existing attempt directory.
+        attempt.mkdir(parents=True, exist_ok=False)
+        owns_attempt = True
+        invocation.link_download_attempt(str(attempt / "manifest.json"))
         if input_error is not None:
             raise RunConfigError(input_error)
         required = {
@@ -64,7 +114,16 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
         for offset in range((end - start).days + 1):
             day = start + timedelta(days=offset)
             if is_trading_day(day):
-                policy.check(day)
+                try:
+                    policy.check(day)
+                except ValueError:
+                    invocation.event(
+                        DiagnosticEventCode.DATA_ACCESS_DENIED,
+                        invocation.stage,
+                        details={"date": day.isoformat()},
+                        level="error",
+                    )
+                    raise
                 requests.append(
                     (
                         day,
@@ -75,12 +134,35 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
                 )
         if not requests:
             raise ValueError("No trading dates requested")
+        invocation.event(
+            DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+            invocation.stage,
+            details={"permitted_dates": len(requests), "total_sessions": len(requests)},
+        )
         cache = BarCache(config["cache"])
         for day, request in requests:
+            invocation.event(
+                DiagnosticEventCode.PROGRESS,
+                invocation.stage,
+                details={
+                    "date": day.isoformat(),
+                    "total_sessions": len(requests),
+                    "completed_sessions": len(report["datasets"]),
+                },
+            )
             identity = cache.acquire(
                 request, client or AlpacaBarsClient(), refresh=refresh
             )
             payload = cache.load(identity, request)
+            invocation.event(
+                DiagnosticEventCode.CACHE_READ,
+                invocation.stage,
+                details={
+                    "date": day.isoformat(),
+                    "coverage_complete": payload["quality"]["coverage_complete"],
+                    "completed_sessions": len(report["datasets"]) + 1,
+                },
+            )
             report["datasets"].append(
                 {
                     "date": day.isoformat(),
@@ -89,18 +171,83 @@ def download(config, out_dir, *, client=None, refresh=False, input_error=None):
                 }
             )
         report["status"] = "success"
+        invocation.event(
+            DiagnosticEventCode.DATASET_COMPLETE,
+            invocation.stage,
+            details={"dataset_count": len(report["datasets"])},
+        )
         return report, attempt / "manifest.json"
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            report["status"] = "interrupted"
-        exc.manifest_path = attempt / "manifest.json"
-        report["error"] = {"type": type(exc).__name__, "message": str(exc)}
+        report["status"] = (
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        )
+        if owns_attempt:
+            exc.manifest_path = attempt / "manifest.json"
+        report["error"] = {
+            "type": type(exc).__name__,
+            "message": invocation.error_message(exc),
+        }
+        # Reflect the invocation's true current stage, not a hardcoded "preparing"
+        # that becomes stale once link_download_attempt() has already resolved it.
+        invocation.fail(exc)
         raise
     finally:
-        write_json(attempt / "manifest.json", report)
+
+        def _finalize_evidence() -> None:
+            # The diagnostics finalize step and the manifest.json write are both
+            # "evidence writing" in T04's sense; a failure in either must never
+            # replace/mask whatever application exception is already propagating
+            # through this `finally` block (attached instead, never raised in its
+            # place).
+            if not owns_attempt:
+                return  # A colliding attempt belongs to somebody else.
+            if invocation.stage != "failed":
+                invocation.set_stage("finalizing")
+            # ARTIFACTS_READY must only be journaled once the manifest (the last
+            # required artifact) is actually on disk -- never before, or a
+            # manifest-write failure would leave a journal falsely claiming
+            # readiness for an attempt that was never fully saved.
+            # Downloads have no SQLite authority. Publish a non-success state
+            # first, then seal diagnostics, then atomically commit the outcome.
+            provisional = (
+                {**report, "status": "finalizing"}
+                if report["status"] == "success"
+                else report
+            )
+            write_json(attempt / "manifest.json", provisional)
+            if report["status"] == "success":
+                invocation.artifacts_ready(stage=invocation.stage)
+            report["diagnostics"] = invocation.seal()
+            write_json(attempt / "manifest.json", report)
+
+        try:
+            protect_evidence_write(
+                _finalize_evidence, catch=(DiagnosticWriteError, OSError)
+            )
+        except BaseException as write_exc:
+            # Before sealing, record this sole write failure in the journal.
+            # After sealing, preserve those bytes and update the small state
+            # summary instead. The atomic manifest remains the download outcome
+            # authority: ARTIFACTS_READY alone never establishes success.
+            write_exc.manifest_path = attempt / "manifest.json"
+            report["status"] = "failed"
+            report["error"] = {
+                "type": type(write_exc).__name__,
+                "message": invocation.error_message(write_exc),
+            }
+            invocation.fail(write_exc)
+            if owns_attempt:
+                protect_evidence_write(
+                    lambda: write_json(attempt / "manifest.json", report),
+                    catch=(OSError, DiagnosticWriteError),
+                )
+            raise
+        if owns_invocation:
+            invocation.close()
 
 
-def prepare_backtest(config, access_log):
+def plan_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
+    """Authorize the entire execution/search budget before any cache inspection."""
     required = {
         "schema_version",
         "cache",
@@ -122,7 +269,11 @@ def prepare_backtest(config, access_log):
         raise ValueError("Explicit final_bars_modeled_at_end acknowledgement required")
     spec = _source(config)
     policy = DatasetPolicy(config["partitions"], config["purpose"])
+    if not isinstance(config["sessions"], list):
+        raise TypeError("Backtest sessions must be a list")
     days = [date.fromisoformat(d) for d in config["sessions"]]
+    if [d.isoformat() for d in days] != config["sessions"]:
+        raise ValueError("Backtest sessions require canonical dates")
     if not days or days != sorted(set(days)):
         raise ValueError("Backtest sessions must be nonempty, unique and ordered")
     scan = config["scanner"]
@@ -135,16 +286,39 @@ def prepare_backtest(config, access_log):
     }
     fields(scan, scan_keys, scan_keys)
     maximum = integer(scan["max_lookback_calendar_sessions"], minimum=1)
-    required_days = set(days)
+    warmup_days = set()
     for day in days:
-        required_days.update(
+        warmup_days.update(
             candidate_prior_session_dates(day, max_lookback_calendar_sessions=maximum)
         )
+    required_days = set(days) | warmup_days
     try:
         for day in sorted(required_days):
-            policy.check(day)
+            try:
+                policy.check(day)
+            except ValueError:
+                if invocation is not None:
+                    invocation.event(
+                        DiagnosticEventCode.DATA_ACCESS_DENIED,
+                        "preparing",
+                        details={"date": day.isoformat()},
+                        level="error",
+                    )
+                raise
+            if invocation is not None:
+                invocation.event(
+                    DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+                    "preparing",
+                    details={"date": day.isoformat()},
+                )
     finally:
         access_log.extend(policy.log)
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.DATA_ACCESS_PERMITTED,
+            "preparing",
+            details={"checked_dates": len(required_days)},
+        )
     review = config["action_review"]
     fields(
         review,
@@ -165,15 +339,87 @@ def prepare_backtest(config, access_log):
         d.isoformat() for d in required_days
     }:
         raise ValueError("Pin exactly one cache object per execution/warmup date")
-    cache = BarCache(config["cache"])
-    # Every date is authorized before the first dataset or alias is opened.
-    loaded = {
-        day: cache.load(
-            config["objects"][day.isoformat()],
-            request_identity(spec["symbol"], day, spec["feed"], spec["asof"]),
-        )
-        for day in sorted(required_days)
+    plan = HistoricalDataPlan(
+        config,
+        tuple(days),
+        frozenset(warmup_days),
+        {
+            day: request_identity(spec["symbol"], day, spec["feed"], spec["asof"])
+            for day in sorted(required_days)
+        },
+    )
+    validate_historical_settings(plan)
+    return plan
+
+
+def validate_historical_settings(plan):
+    """Validate settings before acquisition; no fabricated bars or runner objects."""
+    config = plan.config
+    account = config["account"]
+    keys = {
+        "initial_cash",
+        "sizing",
+        "risk",
+        "costs",
+        "execution",
+        "completion_policy",
+        "flatten_at",
     }
+    fields(account, keys, keys)
+    fields(
+        config["strategy"],
+        {"strategy", "strategy_config"},
+        {"strategy", "strategy_config"},
+    )
+    validate_account_settings({**account, "top_n": config["scanner"]["top_n"]})
+    parse_scanner(
+        {
+            "evidence_type": "historical_bar_estimate",
+            "historical_source": {"feed": config["dataset"]["feed"]},
+            "scanner": {
+                "mode": "minute_history",
+                "feed": config["dataset"]["feed"],
+                "unit_basis": "raw",
+                "corporate_actions": "none",
+                **{k: v for k, v in config["scanner"].items() if k != "top_n"},
+                "history": {},
+            },
+        }
+    )
+    for day in plan.execution_dates:
+        opening, closing = (
+            ms(session_open_local(day).isoformat()),
+            ms(session_close_local(day).isoformat()),
+        )
+        _strategy(config["strategy"], opening, closing)
+        flatten = account["flatten_at"]
+        if flatten is not None:
+            point = ms(flatten)
+            if "T" in flatten:
+                _dated_time(flatten, day)
+            if not opening <= point < closing:
+                raise RunConfigError("flatten_at must precede session close")
+        if closing + account["costs"]["feed_delay_ms"] >= 86_400_000:
+            raise RunConfigError(
+                "modeled feed delay moves input outside the declared session date"
+            )
+
+
+def open_backtest_cache(plan):
+    """Resolve equivalent path spellings only after all dates were authorized.
+
+    Keep historical comparison provenance compatible with the previous loader,
+    without inspecting a cache path in load_request before policy checks.
+    """
+    cache = BarCache(plan.config["cache"])
+    config = {**plan.config, "cache": str(cache.root)}
+    return replace(plan, config=config), cache
+
+
+def compose_backtest(plan, loaded, access_log):
+    """Build the same dated inputs for execution and offline eligibility checking."""
+    config, days = plan.config, plan.execution_dates
+    spec, scan = config["dataset"], config["scanner"]
     account = config["account"]
     keys = {
         "initial_cash",
@@ -269,24 +515,64 @@ def prepare_backtest(config, access_log):
             "history": {spec["symbol"]: history},
         },
     )
+    validate_batch(result, allow_historical=True)
     return result
 
 
-def backtest(config, raw, out_dir, *, report=True):
-    access_log = []
+def prepare_backtest(config, access_log, invocation: DiagnosticWriter | None = None):
+    plan = plan_backtest(config, access_log, invocation)
+    plan, cache = open_backtest_cache(plan)
+    loaded = {
+        day: cache.load(config["objects"][day.isoformat()], request)
+        for day, request in plan.requests.items()
+    }
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.CACHE_READ,
+            "preparing",
+            details={"loaded_dates": len(loaded)},
+        )
+    result = compose_backtest(plan, loaded, access_log)
+    if invocation is not None:
+        invocation.event(
+            DiagnosticEventCode.DATASET_COMPLETE,
+            "preparing",
+            details={"session_count": len(result["sessions"])},
+        )
+    return result
 
-    # Shared lifecycle retains construction/loader failures and the full original request.
-    def prepare(value):
-        return prepare_backtest(value, access_log)
 
-    return run_batch_cli(
-        config,
-        raw,
-        Path(out_dir),
-        report=report,
-        prepare=prepare,
-        access_log=access_log,
-    )
+def backtest(
+    config,
+    raw,
+    out_dir,
+    *,
+    report=True,
+    invocation: DiagnosticWriter | None = None,
+    experiment_context=None,
+):
+    out_dir = Path(out_dir)
+    with invocation_scope(out_dir, command="backtest", invocation=invocation) as writer:
+        access_log = []
+
+        # Shared lifecycle retains loader failures and the original request.
+        def prepare(value):
+            return prepare_backtest(value, access_log, writer)
+
+        return run_batch_cli(
+            config,
+            raw,
+            out_dir,
+            report=report,
+            prepare=prepare,
+            access_log=access_log,
+            invocation=writer,
+            **(
+                {"experiment_context": experiment_context}
+                if experiment_context is not None
+                else {}
+            ),
+        )
 
 
 def load_request(path):
@@ -298,14 +584,16 @@ def load_request(path):
         if not isinstance(config, dict):
             raise TypeError("Expected a JSON object")
         if isinstance(config.get("cache"), str):
-            config["cache"] = str((path.parent / config["cache"]).resolve())
+            config["cache"] = str(path.parent / config["cache"])
         return config, raw
     except Exception as exc:
         exc.input_sha256 = hashlib.sha256(raw).hexdigest() if raw is not None else None
         raise
 
 
-def retain_input_failure(path, out_dir, command, error):
+def retain_input_failure(
+    path, out_dir, command, error, invocation: DiagnosticWriter | None = None
+):
     config = {
         "input_path": str(path),
         "input_sha256": getattr(error, "input_sha256", None),
@@ -313,11 +601,17 @@ def retain_input_failure(path, out_dir, command, error):
     }
     message = "Unable to load request: " + type(error).__name__
     if command == "download":
-        return download(config, out_dir, input_error=message)
+        return download(config, out_dir, input_error=message, invocation=invocation)
 
     def fail(_config):
         raise RunConfigError(message)
 
     return run_batch_cli(
-        config, b"", Path(out_dir), report=True, prepare=fail, access_log=[]
+        config,
+        b"",
+        Path(out_dir),
+        report=True,
+        prepare=fail,
+        access_log=[],
+        invocation=invocation,
     )

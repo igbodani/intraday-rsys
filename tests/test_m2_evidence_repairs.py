@@ -54,6 +54,14 @@ def test_input_hash_is_file_content_and_artifacts_are_sealed(tmp_path):
         str(trace),
         str(manifest),
         str(trace.parent / "report.html"),
+        str(trace.parent / "input.json"),
+        str(trace.parent / "resolved_config.json"),
+        str(trace.parent / "fills.json"),
+        str(trace.parent / "account.json"),
+    }
+    assert data["artifact_hashes"] == {
+        Path(p).name: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        for p in saved.artifacts if p != str(manifest)
     }
     assert saved.metrics["realized_pnl"] == "-120"
     assert data["semantic_trace_hash"] == hashlib.sha256(trace.read_bytes()).hexdigest()
@@ -89,9 +97,16 @@ def test_failed_invocation_is_retained_with_partial_evidence(tmp_path, bad):
     assert len(attempts) == 1
     saved = record(tmp_path / "out", attempts[0].name)
     assert saved.status == "failed" and saved.error
-    assert len(saved.artifacts) == 2
+    expected_artifacts = {"input.json", "resolved_config.json", "trace.jsonl", "manifest.json"}
+    if bad == "incomplete":
+        expected_artifacts.update({"fills.json", "account.json"})
+    assert {Path(p).name for p in saved.artifacts} == expected_artifacts
     manifest = json.loads((attempts[0] / "manifest.json").read_text())
     assert manifest["status"] == "failed"
+    assert manifest["artifact_hashes"] == {
+        Path(p).name: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        for p in saved.artifacts if Path(p).name != "manifest.json"
+    }
     with pytest.raises(CompareCliError):
         compare_run_pair(tmp_path / "out", attempts[0].name, attempts[0].name)
     if bad == "incomplete":

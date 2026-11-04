@@ -1,6 +1,6 @@
 # Current package architecture
 
-Updated 2026-10-30. This is the authoritative file-layout and model-ownership guide. [Current status](CURRENT_SYSTEM_AND_NEXT_STEPS.md) owns the capability/test inventory; [decisions](decisions.md) owns research choices. This reorganization does not add Alpaca access or change trading policies.
+Updated 2026-11-04 for BR-03. This is the authoritative file-layout and model-ownership guide. [Current status](CURRENT_SYSTEM_AND_NEXT_STEPS.md) owns the capability/test inventory; [decisions](decisions.md) owns research choices. This reorganization does not add Alpaca access or change trading policies.
 
 ## Packages and ownership
 
@@ -8,14 +8,14 @@ All packages are under `src/rsys/`. Every package has `models.py`. Plain datacla
 
 | Package | Behavior modules | Models owned here |
 |---|---|---|
-| `cli` | `commands.py`, `fixtures.py`, `__main__.py` | `FixtureCaseOutcome`; argument parsing continues to use `argparse.Namespace` |
-| `application` | `builders.py`, `run.py`, `batch.py`, `sessions.py`, `results.py`, `config.py`, `session_config.py`, `batch_config.py`, `history_config.py`, `historical.py`, `dataset_policy.py`, `registry.py`, `replay.py` | Configuration profiles, registry specifications, validation results, `SessionResult`, `SplitAction`, `ReplayRunResult` |
+| `cli` | `commands.py`, `fixtures.py`, `progress.py`, `__main__.py` | `FixtureCaseOutcome`; argument parsing continues to use `argparse.Namespace` |
+| `application` | `builders.py`, `run.py`, `batch.py`, `sessions.py`, `diagnostics.py`, `results.py`, `config.py`, `session_config.py`, `batch_config.py`, `history_config.py`, `historical.py`, `dataset_policy.py`, `registry.py`, `replay.py` | Configuration profiles, registry specifications, validation results, `SessionResult`, `SessionFunnel`, `SplitAction`, `ReplayRunResult` |
 | `data` | `calendar.py`, `timestamps.py`, `bars.py`, `bar_builder.py`, `bar_version_store.py`, `bar_rules.py`, `quotes.py`, `actions.py`, `features.py`, `history.py`, `alpaca.py`, `bar_cache.py`, `providers.py`, `parity.py` | Events, bars, snapshots/versions, keys, quotes, coverage/universe records, historical rows and feature results |
 | `replay` | `clock.py`, `engine.py`, `runtime.py`, `views.py`, `validation.py` | `Phase`, `ReplayProfile`, `PhaseEvent`, dispatch/observation records |
 | `strategies` | `orb.py`, `vwap.py`, `scanner.py`, `history.py`, `minute_scanner.py`, `interfaces.py` | Shared `CompletedBar`, ORB/VWAP configuration and states, scanner candidates/results, `HistoryScan` |
-| `execution` | `bar.py`, `trade.py`, `trade_adapter.py`, `contracts.py`, `fixtures.py` | Fill transitions/records/outcomes, trade references, execution policy/costs, decisions and fixture results |
+| `execution` | `bar.py`, `trade.py`, `trade_adapter.py`, `contracts.py`, `fixtures.py` | Immutable execution observations, fill transitions/records/outcomes, trade references, execution policy/costs, decisions and fixture results |
 | `account` | `portfolio.py`, `acceptance.py`, `sizing.py`, `risk.py`, `money.py` | Proposals, accepted intents, positions, checkpoints, risk/sizing policies and rejection codes |
-| `research` | `experiments.py`, `storage.py`, `evaluation.py`, `multi_session.py`, `comparison.py`, `holdout.py` | Run records/status, metrics, comparison assumptions, partition/access records, `DatePartition` |
+| `research` | `experiments.py`, `storage.py`, `diagnostics.py`, `trace.py`, `inspection.py`, `reasons.py`, `evaluation.py`, `multi_session.py`, `comparison.py`, `holdout.py` | Run/invocation records, inspection/recovery results, diagnostic events, metrics, comparison assumptions, partition/access records, `DatePartition` |
 | `reporting` | `html.py` | No additional report-only records yet; `models.py` documents reuse of research records and retained JSON |
 
 `Portfolio` deliberately remains in `account/portfolio.py`: although implemented as a dataclass, it is a mutable transactional account aggregate with reservation, buy/sell and invariant behavior, not a plain model. `RiskMonitor`, replay engines, runners and strategy state machines likewise remain services.
@@ -111,3 +111,44 @@ uv run rsys run --config fixtures/sessions_trade_fixture.json --out runs/trade -
 Verified: **763 tests pass**, Ruff is clean, and all **25 public CLI invocations** return their expected exits. All **18 generated semantic traces** match revision `dab3185` exactly, with unchanged account metrics. The wheel build includes all nine model namespaces and the public compatibility entry points. Historical inputs, provider semantics, full equal-timestamp trade execution and final-evaluation enablement remain outside this change.
 
 The initial historical boundary is `application/historical.py`: separate acquisition and offline replay commands, before-read date authorization, and explicit final-bar timing/action-review conventions. `data/alpaca.py` handles network requests only during acquisition; `data/bar_cache.py` stores and verifies request-scoped immutable snapshots. See [ALPACA_LOCAL_BACKTEST.md](ALPACA_LOCAL_BACKTEST.md). The adapter is not yet credential-tested or a complete provider coverage audit.
+
+## Offline data preflight
+
+`application/historical.py` owns the shared authorization/identity plan and resolved
+input composition. `HistoricalDataPlan` lives in `application/models.py`. Both
+`backtest` and `application/preflight.py` reuse those functions, `BarCache.load` and
+`validate_batch`; preflight never constructs a runner or strategy. Its JSON and
+`reporting/preflight.py` HTML are sealed under a file-only manifest, linked from the
+early invocation and inspected/recovered by the existing research services. It
+creates no SQLite research trial. See [DATA_PREFLIGHT.md](DATA_PREFLIGHT.md).
+
+Scanner history now uses the lossless shared archive in `data/history_evidence.py`.
+Its active interning/reader services preserve original snapshot IDs and have no
+research/application dependencies. See [HISTORY_EVIDENCE.md](HISTORY_EVIDENCE.md).
+
+## Bounded provider validation
+
+`application/provider_validation.py` orchestrates existing download, preflight and
+backtest services. `application/file_attempt.py` owns their shared file-only check
+lifecycle; these operational checks do not create research trials. The final
+backtest creates its normal single trial. Pure account/strategy/scanner validation
+is reused before acquisition, without constructing prices or strategies.
+`data/alpaca.py` emits optional sanitized counts through a callback; application
+code connects it to diagnostics. The invocation link remains in `research/models.py`.
+The shared status reader verifies report/config hashes and diagnostic seals.
+`application/offline.py` provides a scoped Python network tripwire and
+`reporting/provider.py` escapes the operator report. No downloader, execution engine,
+core-to-application import or market assumption is duplicated. See
+[ALPACA_PROVIDER_VALIDATION.md](ALPACA_PROVIDER_VALIDATION.md).
+
+
+## Finite experiment orchestration
+
+`application/experiment_config.py` validates the entire explicit plan before market
+I/O, using schemas in `application/models.py`. `application/experiment.py` coordinates
+serial calls to the existing historical backtest and sealed comparison service.
+`research/studies.py` owns transactional study registration and counted reservations;
+trial context is a plain record in `research/models.py`. The optional child context
+is frozen at run creation, not patched into an existing run. Ordinary run APIs retain
+their behavior. `reporting/experiment.py` presents existing diagnostics with explicit
+units and unavailable states. See [EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md).

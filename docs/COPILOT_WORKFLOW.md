@@ -6,13 +6,15 @@ This pack gives Copilot four roles, shared project rules, reusable workflows and
 
 1. Check out the branch containing this pack and open the repository root in VS Code. Install the project's dependencies with `uv sync --frozen --group dev`.
 2. In Copilot Chat, select `architect` for a design task, `python-engineer` for implementation, `quant-researcher` for research assumptions or `adversarial-reviewer` for a concrete diff. Check the customizations view or loaded references to confirm discovery.
-3. In a VS Code **Local** session, run `/plan-change`, `/implement-ticket`, `/audit-research`, `/review-change` or `/prepare-handoff` with your task details. These prompt files select the corresponding role. In other clients, select the role and paste the equivalent task; explicitly reference the relevant skill if automatic discovery misses it.
+3. In a VS Code **Local** session, run `/plan-change`, `/implement-ticket`, `/audit-research`, `/review-change`, `/prepare-handoff` or `/build-backtest-readiness` with your task details. These prompt files select the corresponding role. In other clients, select the role and paste the equivalent task; explicitly reference the relevant skill if automatic discovery misses it.
 4. Give the agent a bounded goal and acceptance condition. Use [the task brief](agent-workflow/task-brief.md) when the change spans modules. It should inspect the code and choose routine implementation details itself.
 5. Start an independent reviewer session against the resulting diff. Have the engineer fix supported findings, then re-review that revision. Publish within the scope you requested.
 
+The next work order is [backtest readiness](agent-workflow/backtest-readiness-plan.md): ordered agent to-do, [development tickets](agent-workflow/backtest-readiness-tickets.md), and [test requirements](agent-workflow/backtest-readiness-tests.md). The provider/history features from the previous starter task are now implemented; do not rebuild them. The new commands in that work order remain specifications until their tickets are delivered.
+
 First useful task to paste to `architect`:
 
-> Plan one offline ticket for a dated, as-of scanner-history adapter using a fake provider. Read current decisions and existing history helpers. Identify model/service ownership and independent tests for prior-session selection, unavailable revisions and missing versus zero volume. Keep real-feed policy unresolved where evidence is missing. Return an implementable task brief.
+> Read the backtest-readiness plan and BR-00. Inspect the current run lifecycle, frozen input records and runner trace emission. Return the concrete early-invocation/journal/sink design, compatibility decisions and independent acceptance checks. Keep wall-clock diagnostics separate from simulation semantics and do not change research policy.
 
 Then give that brief to `python-engineer`:
 
@@ -55,7 +57,7 @@ flowchart TD
 | [.github/copilot-instructions.md](../.github/copilot-instructions.md) | Short always-on project map, setup and completion expectations |
 | `.github/instructions/` | Additional rules when Python, causal/account, evidence or test paths match `applyTo` |
 | `.github/agents/` | Four selectable specialist roles and tool lists |
-| `.github/prompts/` | Five optional VS Code Local task shortcuts |
+| `.github/prompts/` | Six optional VS Code Local task shortcuts, including the next-phase ticket workflow |
 | `.github/skills/` | On-demand procedures, usable across supported Copilot surfaces |
 | [task brief](agent-workflow/task-brief.md) / [handoff](agent-workflow/handoff.md) | Concrete inputs and evidence shared between roles |
 | [config checker](../scripts/check_copilot_config.py) | Metadata, agent references, current path globs and local Markdown-link checks |

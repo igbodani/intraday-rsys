@@ -25,6 +25,8 @@ dev = ["pytest", "ruff"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not alpaca_integration'"
+markers = ["alpaca_integration: explicitly enabled, owner-configured real historical data sample"]
 
 [build-system]
 requires = ["hatchling"]

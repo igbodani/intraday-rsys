@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr
@@ -172,8 +173,140 @@ class RunRecord(BaseModel):
     _secret_values_known: bool = PrivateAttr(default=False)
 
 
+# Operational lifecycle stage of an *invocation*, distinct from `RunStatus` above. These
+# values never enter the `runs` table and are never accepted as a `RunRecord.status` --
+# they describe a command's own progress, not a terminal research outcome (BR-01).
+# "preparing": before any resolved run/download record exists. "resolved": linked to a
+# committed run_id or download attempt. "finalizing": artifacts are being written, after
+# resolution, before the authoritative terminal commit. "failed": the invocation's own
+# operational preparation failed (independent of whether a resolved run already exists).
+InvocationStage = Literal["preparing", "resolved", "finalizing", "failed"]
+
+
+class DiagnosticEventCode(str, Enum):
+    """Closed set of operational event codes a diagnostics reader can switch on,
+    rather than guessing free-text spellings (BR-01 step 3)."""
+
+    INVOCATION_START = "invocation_start"
+    CONFIG_LOADED = "config_loaded"
+    PREFLIGHT_CHECK = "preflight_check"
+    DATA_ACCESS_PERMITTED = "data_access_permitted"
+    DATA_ACCESS_DENIED = "data_access_denied"
+    CACHE_HIT = "cache_hit"
+    CACHE_READ = "cache_read"
+    ACQUISITION_PAGE = "acquisition_page"
+    ACQUISITION_RETRY = "acquisition_retry"
+    DATASET_COMPLETE = "dataset_complete"
+    SESSION_START = "session_start"
+    SESSION_END = "session_end"
+    FAILURE = "failure"
+    ARTIFACTS_READY = "artifacts_ready"
+    PROGRESS = "progress"
+    EXECUTION_OBSERVATION = "execution_observation"
+
+
+class InvocationRecord(BaseModel):
+    """Early, sanitized evidence that a command started: persisted before any
+    cache/network/expansion work and before a resolved research run record may exist.
+    Atomically replaced as a whole (never appended); see `research.diagnostics` for the
+    separate append-only journal. Never a second source of truth for a terminal research
+    outcome -- `RunStorage`'s SQLite commit remains authoritative once a run exists."""
+
+    schema_version: int = 1
+    invocation_id: str
+    command: str
+    created_at: str
+    stage: InvocationStage
+    input_path: str | None = None
+    input_sha256: str | None = None
+    linked_run_id: str | None = None
+    linked_download_attempt: str | None = None
+    linked_preflight_attempt: str | None = None
+    linked_experiment_attempt: str | None = None
+    linked_provider_validation_attempt: str | None = None
+    owner_pid: int | None = None
+    owner_host: str | None = None
+    ended_at: str | None = None
+    write_failure: str | None = None
+    journal_sha256: str | None = None
+    journal_records: int | None = None
+
+
+class DiagnosticRecord(BaseModel):
+    """One append-only operational journal line (`diagnostics.jsonl`). Wall-clock `wall_time`
+    is operational metadata only -- it never drives a strategy and never enters the
+    deterministic semantic trace hash. `simulation_time` is an explicitly separate, optional
+    field for the rare event that also has a meaningful position in simulated time."""
+
+    schema_version: int = 1
+    invocation_id: str
+    run_id: str | None = None
+    sequence: int
+    wall_time: str
+    level: Literal["info", "warning", "error"] = "info"
+    event: DiagnosticEventCode
+    stage: InvocationStage
+    details: dict[str, Any] = Field(default_factory=dict)
+    simulation_time: str | None = None
+
+
+@dataclass(frozen=True)
+class DiagnosticJournalRead:
+    records: tuple[DiagnosticRecord, ...]
+    record_count: int
+    sha256: str
+    incomplete_tail: bool
+
+
+@dataclass(frozen=True)
+class TraceRead:
+    records: tuple[dict, ...]
+    record_count: int
+    sha256: str
+    incomplete_tail: bool
+
+
 @dataclass(frozen=True)
 class DatePartition:
     name: str
     start: str
     end: str
+
+
+@dataclass(frozen=True)
+class AttemptStatus:
+    """An inspection, never a new authority for a research outcome."""
+
+    attempt_id: str
+    invocation_id: str | None
+    run_id: str | None
+    command: str
+    outcome: str
+    completeness: str
+    owner_state: str
+    stage: str
+    last_observed_at: str | None
+    progress: dict
+    error: str | None
+    paths: dict[str, str]
+    explanation: str
+
+
+@dataclass(frozen=True)
+class RecoveryAction:
+    attempt_id: str
+    action: str
+    reason: str
+    applied: bool = False
+
+
+@dataclass(frozen=True)
+class ExperimentTrialContext:
+    study_id: str
+    plan_hash: str
+    parent_id: str
+    trial_id: int
+    arm: str
+    hypothesis: str
+    code_hash: str
+    dependency_hash: str

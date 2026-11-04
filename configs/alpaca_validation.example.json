@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "backtest_config": "alpaca_backtest.example.json",
+  "sample_dates": [],
+  "max_sessions": 3,
+  "adjustment": "raw"
+}

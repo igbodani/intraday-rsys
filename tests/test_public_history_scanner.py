@@ -14,6 +14,7 @@ import pytest
 from rsys.application.batch import SessionBatch, run_batch_cli
 from rsys.application.batch_config import validate_batch
 from rsys.application.errors import RunConfigError
+from rsys.data.history_evidence import read_history_archive
 from rsys.research.comparison import compare_run_pair
 from rsys.research.errors import CompareCliError, ComparisonError
 
@@ -94,7 +95,7 @@ def test_public_history_cli_runs_two_sessions_and_seals_reconstructable_evidence
     assert json.loads((attempt / "input.json").read_text()) == json.loads(
         config_path.read_text()
     )
-    snapshots = json.loads((attempt / "scanner_history.json").read_text())
+    snapshots = read_history_archive(attempt / "scanner_history.json")
     for identity, payload in snapshots.items():
         assert (
             hashlib.sha256(
