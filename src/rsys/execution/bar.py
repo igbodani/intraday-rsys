@@ -32,10 +32,11 @@ from rsys.execution.models import (
     ExecutionPolicy,
     FillRecord,
     FillTransition,
+    ObservationSink,
     RejectedEntry,
     TraceSink,
 )
-from rsys.execution.trace import emit_trace
+from rsys.execution.trace import emit_trace, observe_incomplete, observe_strategy
 from rsys.replay.models import PhaseEvent, ReplayProfile
 from rsys.replay.runtime import ReplayRunner
 from rsys.strategies.interfaces import StrategyLike
@@ -60,6 +61,7 @@ class BarSessionRunner(RiskManagedRunner):
         provider: str = "synthetic",
         feed: str = "fixture",
         event_sink: TraceSink | None = None,
+        observation_sink: ObservationSink | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -84,6 +86,7 @@ class BarSessionRunner(RiskManagedRunner):
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
         self.event_sink = event_sink
+        self.observation_sink = observation_sink
         self.contexts = []
         self._intervals: dict[str, int] = {}
         self._ran = False
@@ -195,6 +198,7 @@ class BarSessionRunner(RiskManagedRunner):
         for event in domain:
             self.engine.enqueue(event)
         self.engine.run()
+        observe_incomplete(self.observation_sink, self)
         if self.exit_due & self.portfolio.positions.keys():
             raise IncompleteSessionError(
                 "required flatten/max-hold exit has no eligible subsequent open"
@@ -334,6 +338,9 @@ class BarSessionRunner(RiskManagedRunner):
                 source.volume,
             )
             proposal = strategy.on_completed_bar(bar, is_candidate=symbol in ranks)
+            observe_strategy(
+                self.observation_sink, event, point, symbol, scan, proposal
+            )
             if proposal is not None:
                 proposals.append(
                     replace(

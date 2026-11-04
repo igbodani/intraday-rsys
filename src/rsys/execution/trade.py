@@ -42,13 +42,15 @@ from rsys.execution.errors import IncompleteSessionError
 from rsys.execution.models import (
     DecisionRecord,
     ExecutionCosts,
+    ExecutionObservation,
     ExecutionPolicy,
     FillRecord,
+    ObservationSink,
     RejectedEntry,
     TraceSink,
     Trade,
 )
-from rsys.execution.trace import emit_trace
+from rsys.execution.trace import emit_trace, observe_incomplete, observe_strategy
 from rsys.execution.trade_adapter import TradeExecutionAdapter
 from rsys.replay.models import PhaseEvent, ReplayProfile
 from rsys.replay.runtime import ReplayRunner, SeriesRouter
@@ -92,6 +94,7 @@ class TradeInputRunner(RiskManagedRunner):
         costs: ExecutionCosts | None = None,
         history_scanner: MinuteHistoryScanner | None = None,
         event_sink: TraceSink | None = None,
+        observation_sink: ObservationSink | None = None,
     ):
         self.strategies = strategies
         self.portfolio = portfolio
@@ -121,6 +124,7 @@ class TradeInputRunner(RiskManagedRunner):
         self.fills: list[FillRecord] = []
         self.trace: list[dict] = []
         self.event_sink = event_sink
+        self.observation_sink = observation_sink
         self.contexts = []
         self._decision_points: set[int] = set()
         self._trade_batches: dict[int, list[TradeEvent]] = {}
@@ -228,6 +232,7 @@ class TradeInputRunner(RiskManagedRunner):
                 self._event("flatten", self.execution.flatten_at_ms, 30, "flatten")
             )
         self.engine.run()
+        observe_incomplete(self.observation_sink, self)
         if self.exit_due & self.portfolio.positions.keys():
             raise IncompleteSessionError(
                 "required flatten/max-hold exit has no eligible subsequent trade"
@@ -423,6 +428,9 @@ class TradeInputRunner(RiskManagedRunner):
                 source.volume,
             )
             proposal = strategy.on_completed_bar(bar, is_candidate=symbol in ranks)
+            observe_strategy(
+                self.observation_sink, event, point, symbol, scan, proposal
+            )
             if proposal is not None:
                 proposals.append(
                     replace(
@@ -526,6 +534,17 @@ class TradeInputRunner(RiskManagedRunner):
         consumed = self.consumed_trade_ids.get(symbol, frozenset())
         outcome = adapter.consider_entry(intent, consumed, trade)
         if outcome.status != "FILLED":
+            if self.observation_sink is not None:
+                self.observation_sink(
+                    ExecutionObservation(
+                        "entry_reference",
+                        f"trade-entries:{point}",
+                        point,
+                        symbol,
+                        outcome.status,
+                        reference_id=trade.trade_id,
+                    )
+                )
             return
         risk_budget = self._risk_budget()
         decision = decide_bar_open_entry(
@@ -615,6 +634,17 @@ class TradeInputRunner(RiskManagedRunner):
         else:
             outcome = adapter.consider_exit(position, trade)
         if outcome.status != "FILLED":
+            if self.observation_sink is not None:
+                self.observation_sink(
+                    ExecutionObservation(
+                        "exit_reference",
+                        f"trade-exits:{point}",
+                        point,
+                        symbol,
+                        outcome.status,
+                        reference_id=trade.trade_id,
+                    )
+                )
             return
         reference_price = outcome.price
         outcome = replace(outcome, price=self.costs.sell_price(reference_price))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -24,6 +24,19 @@ from rsys.data.calendar import CALENDAR_VERSION, session_close_utc, session_open
 from rsys.data.errors import CalendarCoverageError
 from rsys.data.timestamps import parse_utc_timestamp_ns
 from rsys.execution.models import DecisionRecord, FillRecord
+
+
+@dataclass
+class SessionFunnel:
+    session_date: str
+    status: str = "not_started"
+    opportunities: int = 0
+    scanner_eligible: int = 0
+    proposals: int = 0
+    acceptances: int = 0
+    entry_fills: int = 0
+    exits: int = 0
+    reasons: dict = field(default_factory=dict)
 
 
 class Blocker(BaseModel):

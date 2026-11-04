@@ -123,10 +123,19 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
         invocation.event(
             DiagnosticEventCode.DATA_ACCESS_PERMITTED,
             invocation.stage,
-            details={"permitted_dates": len(requests)},
+            details={"permitted_dates": len(requests), "total_sessions": len(requests)},
         )
         cache = BarCache(config["cache"])
         for day, request in requests:
+            invocation.event(
+                DiagnosticEventCode.PROGRESS,
+                invocation.stage,
+                details={
+                    "date": day.isoformat(),
+                    "total_sessions": len(requests),
+                    "completed_sessions": len(report["datasets"]),
+                },
+            )
             identity = cache.acquire(
                 request, client or AlpacaBarsClient(), refresh=refresh
             )
@@ -137,6 +146,7 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
                 details={
                     "date": day.isoformat(),
                     "coverage_complete": payload["quality"]["coverage_complete"],
+                    "completed_sessions": len(report["datasets"]) + 1,
                 },
             )
             report["datasets"].append(

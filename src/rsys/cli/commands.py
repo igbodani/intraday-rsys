@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from rsys.application.config import load_config, validate_config
@@ -15,10 +17,17 @@ from rsys.application.replay import run_replay_from_config
 from rsys.application.run import run_cli_entry
 from rsys.cli.errors import FixtureCliError
 from rsys.cli.fixtures import run_fixture_cli
+from rsys.cli.progress import ProgressReporter
 from rsys.data.errors import ReplayInputError
 from rsys.execution.errors import IncompleteSessionError
 from rsys.research.comparison import compare_run_pair
-from rsys.research.errors import CompareCliError, ComparisonError, DiagnosticWriteError
+from rsys.research.errors import (
+    CompareCliError,
+    ComparisonError,
+    DiagnosticWriteError,
+    RecoveryInProgressError,
+)
+from rsys.research.inspection import inspect_attempt, recover_attempts
 
 EXIT_SUCCESS = 0
 EXIT_OTHER_FAILURE = 1
@@ -150,8 +159,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from rsys.research.diagnostics import start_invocation
 
     out_dir = Path("runs") / "run" if args.out == "auto" else Path(args.out)
+    progress = ProgressReporter(args.progress, sys.stderr)
     try:
-        invocation = start_invocation(out_dir, command="run")
+        invocation = start_invocation(out_dir, command="run", observer=progress)
     except DiagnosticWriteError as exc:
         print(f"error: invocation evidence could not be saved: {exc}", file=sys.stderr)
         return EXIT_OTHER_FAILURE
@@ -190,6 +200,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _print_attempt_paths(exc)
         return EXIT_OTHER_FAILURE
 
+    progress.finish("success")
     print(
         f"ok: {len(summary['decisions'])} decision(s), {len(summary['fills'])} fill(s)"
     )
@@ -266,8 +277,9 @@ def _cmd_data(args):
     from rsys.research.diagnostics import protect_evidence_write, start_invocation
 
     out_dir = Path(args.out)
+    progress = ProgressReporter(args.progress, sys.stderr)
     try:
-        invocation = start_invocation(out_dir, command=args.command)
+        invocation = start_invocation(out_dir, command=args.command, observer=progress)
     except DiagnosticWriteError as exc:
         print(f"error: invocation evidence could not be saved: {exc}", file=sys.stderr)
         return EXIT_OTHER_FAILURE
@@ -315,6 +327,7 @@ def _cmd_data(args):
         _print_attempt_paths(exc)
         return EXIT_DATA_ERROR
 
+    progress.finish("success")
     # Console delivery happens after the committed outcome. A broken output
     # pipe cannot append to or rewrite a completed invocation's evidence.
     if args.command == "download":
@@ -323,6 +336,54 @@ def _cmd_data(args):
     else:
         print(f"ok: {len(summary['fills'])} simulated fill(s)")
         print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
+    return EXIT_SUCCESS
+
+
+def _cmd_inspect(args):
+    try:
+        if args.command == "status":
+            result = asdict(inspect_attempt(args.storage_root, args.id))
+        else:
+            result = {
+                "mode": "apply" if args.apply else "dry_run",
+                "attempts": [
+                    asdict(item)
+                    for item in recover_attempts(
+                        args.storage_root, args.id, apply=args.apply
+                    )
+                ],
+            }
+    except (ValueError, OSError, sqlite3.Error, RecoveryInProgressError) as exc:
+        print(f"error: cannot {args.command}: {exc}", file=sys.stderr)
+        return EXIT_OTHER_FAILURE
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    elif args.command == "status":
+        for key in (
+            "attempt_id",
+            "invocation_id",
+            "run_id",
+            "command",
+            "outcome",
+            "completeness",
+            "owner_state",
+            "stage",
+            "last_observed_at",
+            "error",
+            "explanation",
+        ):
+            # Escape control characters in saved input/error text for terminal safety.
+            value = json.dumps(result[key], ensure_ascii=True)
+            print(f"{key}: {value}")
+        for key, value in result["paths"].items():
+            print(f"{key}: {json.dumps(value)}")
+        print(f"progress: {json.dumps(result['progress'], sort_keys=True)}")
+    else:
+        print(f"{result['mode']}: {len(result['attempts'])} attempt(s)")
+        for item in result["attempts"]:
+            verb = "marked crashed" if item["applied"] else item["action"]
+            print(f"{item['attempt_id']}: {verb}; {item['reason']}")
+    # This is successful inspection/recovery, never a successful simulation claim.
     return EXIT_SUCCESS
 
 
@@ -417,6 +478,34 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--out", required=True)
     backtest.add_argument("--report", action="store_true")
     backtest.set_defaults(func=_cmd_data)
+
+    for command in (run, backtest, download):
+        command.add_argument(
+            "--progress",
+            choices=("auto", "on", "off"),
+            default="auto",
+            help="Human progress on stderr (auto: interactive terminals only)",
+        )
+
+    status = subparsers.add_parser(
+        "status", help="Inspect an invocation or run without changing it"
+    )
+    status.add_argument("--storage-root", required=True)
+    status.add_argument("--id", required=True, help="Invocation ID or run ID")
+    status.add_argument("--json", action="store_true")
+    status.set_defaults(func=_cmd_inspect)
+    recover = subparsers.add_parser(
+        "recover", help="Preview or mark confirmed-dead local attempts crashed"
+    )
+    recover.add_argument("--storage-root", required=True)
+    recover.add_argument("--id", help="Inspect only this invocation or run")
+    recover.add_argument("--json", action="store_true")
+    mode = recover.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="Read-only preview")
+    mode.add_argument(
+        "--apply", action="store_true", help="Apply eligible recovery transitions"
+    )
+    recover.set_defaults(func=_cmd_inspect)
 
     for name in _NOT_IMPLEMENTED:
         stub = subparsers.add_parser(

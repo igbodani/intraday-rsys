@@ -114,6 +114,7 @@ class SessionCoordinator:
         *,
         history_scanner=None,
         event_sink=None,
+        observation_sink=None,
     ) -> BarSessionRunner:
         """Run one calendar session. Raises `CalendarCoverageError` for a non-trading day,
         `UnreconciledPositionError` if a position survived from a prior session, and
@@ -160,6 +161,11 @@ class SessionCoordinator:
             risk=self.risk,
             costs=self.costs,
             **({"event_sink": event_sink} if event_sink is not None else {}),
+            **(
+                {"observation_sink": observation_sink}
+                if observation_sink is not None
+                else {}
+            ),
             **(
                 {"history_scanner": history_scanner}
                 if history_scanner is not None

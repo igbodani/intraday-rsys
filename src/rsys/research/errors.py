@@ -67,3 +67,7 @@ class DiagnosticIntegrityError(ValueError):
 
 class TraceWriteError(DiagnosticWriteError):
     """Required semantic trace could not be saved; the attempt must stop."""
+
+
+class InspectionError(ValueError):
+    """An attempt is missing or its operational evidence cannot be interpreted."""

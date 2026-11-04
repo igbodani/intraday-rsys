@@ -16,6 +16,7 @@ from rsys.account.portfolio import Portfolio
 from rsys.account.risk import RiskMonitor
 from rsys.application.batch_config import execution_costs, risk_policy, validate_batch
 from rsys.application.builders import build_bar, build_strategy
+from rsys.application.diagnostics import ExecutionDiagnostics
 from rsys.application.errors import RunConfigError
 from rsys.application.history_config import build_history_scanner, parse_scanner
 from rsys.application.results import summarize_runner
@@ -123,7 +124,7 @@ class SessionBatch:
             costs=self.costs,
         )
 
-    def run(self, *, event_sink=None, session_sink=None):
+    def run(self, *, event_sink=None, session_sink=None, observation_sink=None):
         if self._ran:
             raise ValueError("a batch attempt is single-use")
         self._ran = True
@@ -194,6 +195,7 @@ class SessionBatch:
                     data,
                     scanner,
                     corrections,
+                    observation_sink=observation_sink,
                     history_scanner=build_history_scanner(
                         self.config, self.history, day, plan["symbols"]
                     ),
@@ -385,6 +387,9 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
             ),
         }
         trace_writer = None
+        diagnostics = ExecutionDiagnostics(
+            invocation, list(batch.plans) if batch else []
+        )
         with run_context(storage, record):
             # Metadata and directory failures are handled failures in the same
             # authoritative lifecycle as execution/finalization failures.
@@ -489,6 +494,7 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                     )
 
                 def session_checkpoint(boundary, session):
+                    diagnostics.session(boundary, session)
                     write_json(
                         attempt / "sessions" / f"{session['session_date']}.json",
                         session,
@@ -502,8 +508,14 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                         details={"date": session["session_date"]},
                     )
 
+                def retain_event(row):
+                    trace_writer.write(row)
+                    diagnostics.trace(row)
+
                 batch.run(
-                    event_sink=trace_writer.write, session_sink=session_checkpoint
+                    event_sink=retain_event,
+                    session_sink=session_checkpoint,
+                    observation_sink=diagnostics.observation,
                 )
                 trace_writer.close()
                 manifest["status"], manifest["metrics_scope"] = (
@@ -546,6 +558,7 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                     raise
                 summary = batch.summary() if batch else {}
                 manifest.update(summary)
+                manifest["funnel"] = diagnostics.snapshot()
                 rows = batch.trace if batch else []
 
                 def _write_all_artifacts() -> None:

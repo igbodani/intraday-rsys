@@ -19,6 +19,7 @@ from rsys.reporting.errors import ReportError
 from rsys.research.comparison import load_run_manifest
 from rsys.research.diagnostics import verify_diagnostic_seal
 from rsys.research.errors import CompareCliError, RunNotFoundError
+from rsys.research.reasons import explain_reason
 from rsys.research.storage import RunStorage
 from rsys.research.trace import read_trace, verify_streamed_artifacts
 
@@ -146,6 +147,60 @@ def _scanner_details(records: list[dict[str, Any]]) -> str:
     )
 
 
+def _funnel_table(manifest):
+    funnel = manifest.get("funnel")
+    if not funnel:
+        return "<p>Session funnel unavailable for this older attempt.</p>"
+    columns = (
+        "session_date",
+        "status",
+        "opportunities",
+        "scanner_eligible",
+        "proposals",
+        "acceptances",
+        "entry_fills",
+        "exits",
+    )
+    header = "".join(f"<th>{_esc(c)}</th>" for c in columns)
+    rows = "".join(
+        "<tr>" + "".join(f"<td>{_esc(s[c])}</td>" for c in columns) + "</tr>"
+        for s in funnel["sessions"]
+    )
+    reasons = []
+    for session in funnel["sessions"]:
+        for _, reason in sorted(session["reasons"].items()):
+            refs = "; ".join(
+                f"event {e['event_id']}, symbol {e['symbol']}, journal line {e['journal_sequence']}"
+                for e in reason["examples"]
+            )
+            reasons.append(
+                "<tr>"
+                + "".join(
+                    f"<td>{_esc(v)}</td>"
+                    for v in (
+                        session["session_date"],
+                        reason["stage"],
+                        reason["code"],
+                        reason["count"],
+                        explain_reason(reason["code"]),
+                        refs,
+                    )
+                )
+                + "</tr>"
+            )
+    units = "".join(
+        f"<li>{_esc(k)}: {_esc(v)}</li>" for k, v in funnel["units"].items()
+    )
+    return (
+        f"<h2>Session funnel</h2><ul>{units}</ul>"
+        f"<p>Counts describe observed work only. Failed/interrupted sessions are partial; not_started sessions have no observations. "
+        f"Reason examples refer to diagnostics.jsonl in invocation {_esc(funnel['invocation_id'])}; up to three examples per reason.</p>"
+        f"<table><thead><tr>{header}</tr></thead><tbody>{rows}</tbody></table>"
+        "<table><caption>Observed reasons</caption><thead><tr><th>session</th><th>stage</th><th>code</th><th>count</th><th>explanation</th><th>original evidence</th></tr></thead>"
+        f"<tbody>{''.join(reasons)}</tbody></table>"
+    )
+
+
 def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> str:
     historical = manifest.get("evidence_type") == "historical_bar_estimate"
     title = (
@@ -220,6 +275,7 @@ th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left; }}
 <p>Scanner basis: {_esc(manifest.get("scanner_basis", "unavailable"))}.</p>
 {_metrics_table(metrics)}
 {sessions_table}
+{_funnel_table(manifest)}
 {_decisions_table(records)}
 {_fills_table(records)}
 {_scanner_details(records)}

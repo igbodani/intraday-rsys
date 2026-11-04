@@ -201,6 +201,8 @@ class DiagnosticEventCode(str, Enum):
     SESSION_END = "session_end"
     FAILURE = "failure"
     ARTIFACTS_READY = "artifacts_ready"
+    PROGRESS = "progress"
+    EXECUTION_OBSERVATION = "execution_observation"
 
 
 class InvocationRecord(BaseModel):
@@ -266,3 +268,30 @@ class DatePartition:
     name: str
     start: str
     end: str
+
+
+@dataclass(frozen=True)
+class AttemptStatus:
+    """An inspection, never a new authority for a research outcome."""
+
+    attempt_id: str
+    invocation_id: str | None
+    run_id: str | None
+    command: str
+    outcome: str
+    completeness: str
+    owner_state: str
+    stage: str
+    last_observed_at: str | None
+    progress: dict
+    error: str | None
+    paths: dict[str, str]
+    explanation: str
+
+
+@dataclass(frozen=True)
+class RecoveryAction:
+    attempt_id: str
+    action: str
+    reason: str
+    applied: bool = False

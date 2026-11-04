@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from rsys.application.builders import build_runner
+from rsys.application.diagnostics import ExecutionDiagnostics
 from rsys.application.errors import RunConfigError
 from rsys.application.results import summarize_runner
 from rsys.application.session_config import validate
@@ -128,7 +129,7 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                 attempt / "trace.jsonl",
                 attempt / "manifest.json",
             )
-            runner, trace_writer = None, None
+            runner, trace_writer, diagnostics = None, None, None
             try:
                 # Inside the fail()-covered try: a collision/permission failure here
                 # must still leave a FAILURE event, never an invocation stuck "resolved".
@@ -174,8 +175,21 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                                 )
                         prepare_evidence()
                         runner, bars, scanner = build_runner(config)
-                        runner.event_sink = trace_writer.write
                         starting = runner.portfolio.equity({})
+                        diagnostics = ExecutionDiagnostics(
+                            invocation, [runner.session_date]
+                        )
+
+                        def retain_event(row):
+                            trace_writer.write(row)
+                            diagnostics.trace(row)
+
+                        runner.event_sink = retain_event
+                        runner.observation_sink = diagnostics.observation
+                        diagnostics.session(
+                            "start",
+                            {"session_date": runner.session_date, "status": "running"},
+                        )
                         # Resolve defaults into evidence, so an omitted setting is never a hidden assumption.
                         manifest.update(
                             {
@@ -225,6 +239,10 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                     except BaseException as exc:
                         if isinstance(exc, KeyboardInterrupt):
                             manifest["status"] = "interrupted"
+                        manifest["error"] = {
+                            "type": type(exc).__name__,
+                            "message": invocation.error_message(exc),
+                        }
                         # Record the execution failure before finally seals the
                         # journal. Outer handlers deduplicate this exception.
                         invocation.fail(exc)
@@ -250,6 +268,16 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                                 manifest["status"] == "success"
                                 and not trace_state.incomplete_tail
                             )
+                            if diagnostics is not None:
+                                diagnostics.session(
+                                    "end",
+                                    {
+                                        "session_date": runner.session_date,
+                                        "status": manifest["status"],
+                                    },
+                                    checkpoint=False,
+                                )
+                                manifest["funnel"] = diagnostics.snapshot()
                             if runner is not None:
                                 partial_summary = summarize_runner(runner, starting)
                                 _write_json(
@@ -266,7 +294,7 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             # failure would leave a journal falsely claiming
                             # readiness for an attempt that was never fully
                             # saved.
-                            if report and manifest["status"] == "success":
+                            if report:
                                 (attempt / "report.html").write_text(
                                     render_report(manifest, rows), encoding="utf-8"
                                 )
@@ -284,6 +312,12 @@ def _run_cli_entry(config_path, out_dir, *, report, invocation):
                             record.decision_gate_status["manifest_sha256"] = (
                                 hashlib.sha256(manifest_path.read_bytes()).hexdigest()
                             )
+                            # Even a poisoned journal must not prevent saving known
+                            # fills/account/manifest through independent healthy files.
+                            if diagnostics is not None:
+                                protect_evidence_write(
+                                    lambda: diagnostics.checkpoint(force=True)
+                                )
                             if manifest["status"] == "success":
                                 invocation.artifacts_ready(stage=invocation.stage)
                             record.decision_gate_status["diagnostics"] = json.dumps(

@@ -1,5 +1,7 @@
 # Current system and next steps for Copilot
 
+Current work-order update: BR-01–BR-03 add early operational journals, streaming trading evidence, `--progress`, read-only `status`, conservative `recover` and per-session explanations. See [the operator guide](RUN_DIAGNOSTICS.md), [BR-03 verification](agent-workflow/BR03_VERIFICATION.md) and [the ordered readiness plan](agent-workflow/backtest-readiness-plan.md). BR-04 offline data preflight is next. Older counts below are historical evidence, not the current verification result.
+
 Latest addition: the initial Alpaca raw-minute-bar downloader, immutable local cache, offline historical backtest command and before-read date guards are implemented. See [ALPACA_LOCAL_BACKTEST.md](ALPACA_LOCAL_BACKTEST.md) for the supported 2024/single-symbol scope, offline test evidence and remaining credential/feed/action checks. Earlier synthetic-only limits below describe the existing fixture interfaces, not the new separately labeled historical command. No real provider data was tested.
 
 Updated 2026-10-30 after the package/model reorganization. The authoritative package map is [ARCHITECTURE.md](ARCHITECTURE.md). Priorities 1–2 build on repaired revision `4e68583` on `fix/r3-replay-causality`. [PUBLIC_SESSION_RUNS.md](PUBLIC_SESSION_RUNS.md) describes the new public interface and policies. [DEVELOP_REPAIR_RESULTS.md](DEVELOP_REPAIR_RESULTS.md) and [M2_REPAIR_RESULTS.md](M2_REPAIR_RESULTS.md) retain the repair history. Use the containing commit as the exact implemented source revision.

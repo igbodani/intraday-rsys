@@ -70,6 +70,18 @@ _DETAIL_KEYS = frozenset(
         "page_count",
         "retry_count",
         "count",
+        "event_id",
+        "kind",
+        "code",
+        "eligible",
+        "proposed",
+        "reference_id",
+        "available_at_ms",
+        "completed_sessions",
+        "total_sessions",
+        "processed_events",
+        "entry_fills",
+        "exits",
     }
 )
 
@@ -249,6 +261,7 @@ class DiagnosticWriter:
         redactor: SecretRedactor | None = None,
         clock: Callable[[], str] | None = None,
         open_append: Callable[[Path], Any] | None = None,
+        observer: Callable[[DiagnosticRecord], None] | None = None,
     ):
         self.invocation_id = invocation_id
         self.command = command
@@ -258,6 +271,7 @@ class DiagnosticWriter:
         self._redactor = redactor or SecretRedactor.unknown()
         self._clock = clock or _default_clock
         self._open_append = open_append or _default_open_append
+        self._observer = observer
         self._sequence = 0
         self._sealed = False
         self._write_error: DiagnosticWriteError | None = None
@@ -365,6 +379,10 @@ class DiagnosticWriter:
     def stage(self) -> str:
         return self._record.stage
 
+    @property
+    def sequence(self) -> int:
+        return self._sequence
+
     # -- diagnostics.jsonl (append-only journal) ------------------------------
 
     def event(
@@ -410,6 +428,9 @@ class DiagnosticWriter:
                 protect_evidence_write(handle.close, catch=(OSError,))
         except OSError as exc:
             self._handle_write_failure(exc)
+        if self._observer is not None:
+            # A fresh value prevents a presentation consumer from changing evidence.
+            self._observer(DiagnosticRecord.model_validate_json(line))
 
     def _handle_write_failure(self, exc: OSError) -> None:
         # Preserve the primary failure (re-raised below) and attempt one sanitized
@@ -573,6 +594,7 @@ def start_invocation(
     clock: Callable[[], str] | None = None,
     open_append: Callable[[Path], Any] | None = None,
     invocation_id: str | None = None,
+    observer: Callable[[DiagnosticRecord], None] | None = None,
 ) -> DiagnosticWriter:
     """Allocate an invocation ID and persist its evidence directory before any
     cache/network/expansion work. Concurrent commands always get distinct
@@ -593,4 +615,5 @@ def start_invocation(
         redactor=redactor,
         clock=clock,
         open_append=open_append,
+        observer=observer,
     )

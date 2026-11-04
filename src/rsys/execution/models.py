@@ -13,6 +13,23 @@ TraceSink = Callable[[dict], None]
 
 
 @dataclass(frozen=True)
+class ExecutionObservation:
+    """Immutable observation of an actual call/result; no execution authority."""
+
+    kind: str
+    event_id: str
+    available_at_ms: int
+    symbol: str
+    code: str
+    eligible: bool = False
+    proposed: bool = False
+    reference_id: str | None = None
+
+
+ObservationSink = Callable[[ExecutionObservation], None]
+
+
+@dataclass(frozen=True)
 class FillTransition:
     """One fully-formed entry or exit fill, independent of which adapter produced it."""
 
