@@ -710,3 +710,45 @@ class SessionResult:
 
 
 RsysConfig = FixtureConfig | ResearchConfig | ReplayConfig
+
+
+class ExperimentPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    path: list[str] = Field(min_length=1)
+    value: Any
+
+
+class ExperimentVariant(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    changes: list[ExperimentPatch] = Field(min_length=1)
+
+
+class ExperimentPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    schema_version: Literal[1]
+    study_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    hypothesis: str = Field(min_length=1)
+    study_kind: Literal[
+        "scanner", "entry", "exit", "costs", "account", "complete_system"
+    ]
+    base_config: str = Field(min_length=1)
+    variants: list[ExperimentVariant] = Field(min_length=1)
+    permitted_axis: Literal[
+        "scanner_profile",
+        "strategies",
+        "execution_mode",
+        "cost_profile",
+        "risk_profile",
+        "initial_cash",
+    ]
+    trial_limit: int = Field(gt=0)
+    counting: Literal["all_execution_attempts"]
+    failure_policy: Literal["stop", "continue"]
+    external_attempts: list[str]
+
+
+@dataclass(frozen=True)
+class ExperimentArm:
+    name: str
+    config: dict

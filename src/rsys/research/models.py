@@ -222,6 +222,7 @@ class InvocationRecord(BaseModel):
     linked_run_id: str | None = None
     linked_download_attempt: str | None = None
     linked_preflight_attempt: str | None = None
+    linked_experiment_attempt: str | None = None
     linked_provider_validation_attempt: str | None = None
     owner_pid: int | None = None
     owner_host: str | None = None
@@ -297,3 +298,15 @@ class RecoveryAction:
     action: str
     reason: str
     applied: bool = False
+
+
+@dataclass(frozen=True)
+class ExperimentTrialContext:
+    study_id: str
+    plan_hash: str
+    parent_id: str
+    trial_id: int
+    arm: str
+    hypothesis: str
+    code_hash: str
+    dependency_hash: str

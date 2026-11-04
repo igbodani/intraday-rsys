@@ -140,3 +140,15 @@ The shared status reader verifies report/config hashes and diagnostic seals.
 `reporting/provider.py` escapes the operator report. No downloader, execution engine,
 core-to-application import or market assumption is duplicated. See
 [ALPACA_PROVIDER_VALIDATION.md](ALPACA_PROVIDER_VALIDATION.md).
+
+
+## Finite experiment orchestration
+
+`application/experiment_config.py` validates the entire explicit plan before market
+I/O, using schemas in `application/models.py`. `application/experiment.py` coordinates
+serial calls to the existing historical backtest and sealed comparison service.
+`research/studies.py` owns transactional study registration and counted reservations;
+trial context is a plain record in `research/models.py`. The optional child context
+is frozen at run creation, not patched into an existing run. Ordinary run APIs retain
+their behavior. `reporting/experiment.py` presents existing diagnostics with explicit
+units and unavailable states. See [EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md).

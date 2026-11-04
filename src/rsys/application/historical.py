@@ -549,6 +549,7 @@ def backtest(
     *,
     report=True,
     invocation: DiagnosticWriter | None = None,
+    experiment_context=None,
 ):
     out_dir = Path(out_dir)
     with invocation_scope(out_dir, command="backtest", invocation=invocation) as writer:
@@ -566,6 +567,11 @@ def backtest(
             prepare=prepare,
             access_log=access_log,
             invocation=writer,
+            **(
+                {"experiment_context": experiment_context}
+                if experiment_context is not None
+                else {}
+            ),
         )
 
 

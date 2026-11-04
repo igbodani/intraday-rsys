@@ -365,6 +365,29 @@ def _cmd_check_data(args):
     return EXIT_SUCCESS if result["can_execute"] else EXIT_DATA_ERROR
 
 
+def _cmd_experiment(args):
+    from rsys.application.experiment import run_experiment
+
+    try:
+        result, manifest = run_experiment(args.plan, args.out)
+    except Exception as exc:  # noqa: BLE001 -- retained failures
+        print(
+            f"error: {type(exc).__name__}: {getattr(exc, 'diagnostic_message', 'Experiment could not complete')}",
+            file=sys.stderr,
+        )
+        _print_attempt_paths(exc)
+        return (
+            EXIT_OTHER_FAILURE
+            if isinstance(exc, (OSError, DiagnosticWriteError))
+            else EXIT_DATA_ERROR
+        )
+    print(f"experiment_status: {result['status']}")
+    print("promotion_status: unscored")
+    print(f"manifest: {manifest}")
+    print(f"report: {manifest.parent / 'report.html'}")
+    return EXIT_SUCCESS if result["status"] == "success" else EXIT_DATA_ERROR
+
+
 def _cmd_validate_alpaca(args):
     from rsys.application.provider_validation import validate_sample
 
@@ -545,6 +568,13 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--config", required=True)
     preflight.add_argument("--out", required=True)
     preflight.set_defaults(func=_cmd_check_data)
+
+    experiment = subparsers.add_parser(
+        "experiment", help="Run a finite declared experiment on pinned local data"
+    )
+    experiment.add_argument("--plan", required=True)
+    experiment.add_argument("--out", required=True)
+    experiment.set_defaults(func=_cmd_experiment)
 
     provider = subparsers.add_parser(
         "validate-alpaca",

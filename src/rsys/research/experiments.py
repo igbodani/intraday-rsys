@@ -259,6 +259,7 @@ def start_run(
     data_not_applicable_reason: str | None = None,
     data_unavailable_reason: str | None = None,
     repo_root: str | Path | None = None,
+    expected_provenance: tuple[str, str] | None = None,
 ) -> RunRecord:
     """Create a new run record. Input-data provenance is mandatory: either a
     nonblank `data_identity`, or a nonblank explicit `data_not_applicable_reason`,
@@ -283,6 +284,12 @@ def start_run(
     root = Path(repo_root) if repo_root is not None else None
     redacted_config = redact_secrets(resolved_config)
     code_hash, code_manifest = compute_source_fingerprint(root)
+    lock_hash = compute_dependency_lock_hash(root)
+    if (
+        expected_provenance is not None
+        and (code_hash, lock_hash) != expected_provenance
+    ):
+        raise ValueError("Source/dependency identity changed during experiment")
     record = RunRecord(
         run_id=new_run_id(),
         hypothesis=hypothesis,
@@ -301,7 +308,7 @@ def start_run(
         code_hash=code_hash,
         code_manifest=code_manifest,
         code_revision=compute_code_revision(root),
-        dependency_lock_hash=compute_dependency_lock_hash(root),
+        dependency_lock_hash=lock_hash,
         seed=seed,
         account_cost_profile=account_cost_profile,
         started_at=datetime.now(UTC).isoformat(),

@@ -420,6 +420,11 @@ class DiagnosticWriter:
         self._record.stage = _STAGE_RESOLVED
         self._write_invocation()
 
+    def link_experiment_attempt(self, manifest_path: str) -> None:
+        self._record.linked_experiment_attempt = manifest_path
+        self._record.stage = _STAGE_RESOLVED
+        self._write_invocation()
+
     def link_provider_validation_attempt(self, manifest_path: str) -> None:
         self._record.linked_provider_validation_attempt = manifest_path
         self._record.stage = _STAGE_RESOLVED

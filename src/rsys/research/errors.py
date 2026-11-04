@@ -71,3 +71,7 @@ class TraceWriteError(DiagnosticWriteError):
 
 class InspectionError(ValueError):
     """An attempt is missing or its operational evidence cannot be interpreted."""
+
+
+class StudyBudgetError(ValueError):
+    """The declared persistent study budget has no available slot."""

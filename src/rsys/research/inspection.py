@@ -234,6 +234,7 @@ def _read_status(root, identity):
         for kind, path in (
             ("downloads", state.linked_download_attempt),
             ("preflights", state.linked_preflight_attempt),
+            ("experiments", state.linked_experiment_attempt),
             ("provider-validations", state.linked_provider_validation_attempt),
         )
         if path
@@ -273,10 +274,14 @@ def _read_status(root, identity):
                 if seal.get("invocation_id") != state.invocation_id:
                     raise InspectionError("download invocation mismatch")
                 verify_diagnostic_seal(root, seal)
-                if kind in ("preflights", "provider-validations"):
+                if kind in ("preflights", "provider-validations", "experiments"):
                     artifacts = manifest.get("artifacts", {})
                     required = {
-                        "preflight.json" if kind == "preflights" else "validation.json",
+                        {
+                            "preflights": "preflight.json",
+                            "provider-validations": "validation.json",
+                            "experiments": "experiment.json",
+                        }[kind],
                         "report.html",
                     }
                     if not isinstance(artifacts, dict) or not required <= set(

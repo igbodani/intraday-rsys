@@ -301,6 +301,7 @@ def run_batch_cli(
     prepare=None,
     access_log=None,
     invocation: DiagnosticWriter | None = None,
+    experiment_context=None,
 ):
     with invocation_scope(out_dir, command="run", invocation=invocation) as writer:
         if isinstance(config, dict):
@@ -313,10 +314,21 @@ def run_batch_cli(
             prepare=prepare,
             access_log=access_log,
             invocation=writer,
+            experiment_context=experiment_context,
         )
 
 
-def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocation):
+def _run_batch_cli(
+    config,
+    raw,
+    out_dir,
+    *,
+    report,
+    prepare,
+    access_log,
+    invocation,
+    experiment_context=None,
+):
     from rsys.reporting.html import render_report
 
     owns_invocation = invocation is None
@@ -342,17 +354,34 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
     redactor = SecretRedactor.from_resolved_config(config)
     try:
         try:
+            frozen_config = batch.config if batch else config
+            study_args = {}
+            if experiment_context is not None:
+                frozen_config = {
+                    **frozen_config,
+                    "experiment": asdict(experiment_context),
+                }
+                study_args = {
+                    "parent_run_id": experiment_context.parent_id,
+                    "expected_provenance": (
+                        experiment_context.code_hash,
+                        experiment_context.dependency_hash,
+                    ),
+                }
             record = start_run(
                 storage,
-                hypothesis=(
+                hypothesis=experiment_context.hypothesis
+                if experiment_context
+                else (
                     "Offline historical bars with modeled timing and explicit risk/cost policy."
                     if config.get("evidence_type") == "historical_bar_estimate"
                     else "Offline synthetic sessions with explicit risk/cost policy."
                 ),
                 phase="run",
-                resolved_config=batch.config if batch else config,
+                resolved_config=frozen_config,
                 data_identity="sha256:" + hashlib.sha256(raw).hexdigest(),
                 repo_root=Path(__file__).resolve().parents[3],
+                **study_args,
             )
         except BaseException as exc:
             invocation.fail(exc, stage="preparing")
@@ -387,6 +416,8 @@ def _run_batch_cli(config, raw, out_dir, *, report, prepare, access_log, invocat
                 else "supplied_synthetic_scores"
             ),
         }
+        if experiment_context is not None:
+            manifest["experiment"] = asdict(experiment_context)
         trace_writer = None
         diagnostics = ExecutionDiagnostics(
             invocation, list(batch.plans) if batch else []
