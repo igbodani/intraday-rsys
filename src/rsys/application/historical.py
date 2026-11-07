@@ -22,7 +22,7 @@ from rsys.application.errors import RunConfigError
 from rsys.application.history_config import parse_scanner
 from rsys.application.models import HistoricalDataPlan
 from rsys.application.session_config import fields, integer, ms
-from rsys.data.alpaca import AlpacaBarsClient
+from rsys.data.alpaca import AlpacaBarsClient, AlpacaTradesClient
 from rsys.data.bar_cache import BarCache, request_identity
 from rsys.data.calendar import (
     EXCHANGE_TZ,
@@ -30,6 +30,7 @@ from rsys.data.calendar import (
     session_close_local,
     session_open_local,
 )
+from rsys.data.gaps import GAP_POLICY_VERSION, KNOWN_GAPS, dataset_gaps, estimate_label
 from rsys.data.history import candidate_prior_session_dates
 from rsys.research.diagnostics import (
     DiagnosticWriter,
@@ -53,6 +54,7 @@ def download(
     out_dir,
     *,
     client=None,
+    gap_client=None,
     refresh=False,
     input_error=None,
     invocation: DiagnosticWriter | None = None,
@@ -62,13 +64,14 @@ def download(
             config,
             out_dir,
             client=client,
+            gap_client=gap_client,
             refresh=refresh,
             input_error=input_error,
             invocation=writer,
         )
 
 
-def _download(config, out_dir, *, client, refresh, input_error, invocation):
+def _download(config, out_dir, *, client, gap_client, refresh, input_error, invocation):
     out_dir = Path(out_dir)
     owns_invocation = invocation is None
     if invocation is None:
@@ -98,7 +101,9 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
             "partitions",
             "purpose",
         }
-        fields(config, required, required)
+        fields(config, required | {"gap_evidence"}, required)
+        if config.get("gap_evidence", "none") not in ("none", "trades"):
+            raise ValueError("gap_evidence must be none or trades")
         if type(config["schema_version"]) is not int or config["schema_version"] != 1:
             raise ValueError("Unsupported download schema")
         spec = _source(config)
@@ -151,7 +156,12 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
                 },
             )
             identity = cache.acquire(
-                request, client or AlpacaBarsClient(), refresh=refresh
+                request,
+                client or AlpacaBarsClient(),
+                refresh=refresh,
+                gap_client=(gap_client or AlpacaTradesClient())
+                if config.get("gap_evidence") == "trades"
+                else None,
             )
             payload = cache.load(identity, request)
             invocation.event(
@@ -168,8 +178,10 @@ def _download(config, out_dir, *, client, refresh, input_error, invocation):
                     "date": day.isoformat(),
                     "object_id": identity,
                     "quality": payload["quality"],
+                    "gaps": dataset_gaps(payload),
                 }
             )
+        report["estimate_label"] = estimate_label(spec["feed"])
         report["status"] = "success"
         invocation.event(
             DiagnosticEventCode.DATASET_COMPLETE,
@@ -262,7 +274,9 @@ def plan_backtest(config, access_log, invocation: DiagnosticWriter | None = None
         "action_review",
         "timing_basis",
     }
-    fields(config, required, required)
+    fields(config, required | {"missing_bar_policy"}, required)
+    if config.get("missing_bar_policy", "strict") not in ("strict", "continue"):
+        raise ValueError("missing_bar_policy must be strict or continue")
     if type(config["schema_version"]) is not int or config["schema_version"] != 1:
         raise ValueError("Unsupported historical backtest schema")
     if config["timing_basis"] != "final_bars_modeled_at_end":
@@ -439,6 +453,8 @@ def compose_backtest(plan, loaded, access_log):
     result = {k: deepcopy(v) for k, v in account.items() if k != "flatten_at"}
     history = []
     sessions = []
+    gaps_by_session = {}
+    sparse = config.get("missing_bar_policy", "strict") == "continue"
     delay = integer(account["costs"]["feed_delay_ms"])
     for day, dataset in loaded.items():
         bars = []
@@ -479,8 +495,30 @@ def compose_backtest(plan, loaded, access_log):
                     },
                 }
             )
+        gaps = dataset_gaps(dataset) if sparse else []
+        for gap in gaps:
+            if gap["status"] not in KNOWN_GAPS:
+                continue
+            start = datetime.fromisoformat(gap["minute"])
+            local = start.astimezone(EXCHANGE_TZ)
+            history.append(
+                {
+                    "session_date": day.isoformat(),
+                    "minute_index": local.hour * 60 + local.minute - 570,
+                    "available_at": (
+                        start + timedelta(minutes=1, milliseconds=delay)
+                    ).isoformat(),
+                    "revision": 0,
+                    "source": "alpaca-gap-trades:" + config["objects"][day.isoformat()],
+                    "status": gap["status"],
+                    "close": None,
+                    "volume": gap["volume"],
+                }
+            )
         if day in days:
-            if not dataset["quality"]["coverage_complete"]:
+            if gaps:
+                gaps_by_session[day.isoformat()] = {spec["symbol"]: gaps}
+            if not sparse and not dataset["quality"]["coverage_complete"]:
                 raise ValueError(
                     f"Incomplete execution-day coverage: {day}; absent bars are not verified no-trade minutes"
                 )
@@ -505,6 +543,17 @@ def compose_backtest(plan, loaded, access_log):
             "timing_basis": config["timing_basis"],
             "dataset_hashes": config["objects"],
             "promotion_status": "unscored",
+            "estimate_label": estimate_label(spec["feed"]),
+            "missing_bar_policy": config.get("missing_bar_policy", "strict"),
+            "gap_policy_version": GAP_POLICY_VERSION if sparse else None,
+            "gaps_by_session": gaps_by_session,
+            "unknown_gap_count": sum(
+                g["status"] not in KNOWN_GAPS
+                for dataset in loaded.values()
+                for g in dataset_gaps(dataset)
+            )
+            if sparse
+            else 0,
         },
         scanner={
             "mode": "minute_history",

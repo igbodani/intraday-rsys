@@ -63,7 +63,7 @@ def ms(value):
         raise RunConfigError(f"invalid exchange-local timestamp: {value!r}") from exc
 
 
-def validate(config):
+def validate(config, *, sparse_session_date=None):
     fields(
         config,
         {
@@ -103,7 +103,8 @@ def validate(config):
     symbols = config["symbols"]
     if not isinstance(symbols, dict) or not symbols:
         raise RunConfigError("symbols must be a nonempty object")
-    dates, stamped = set(), []
+    dates = {sparse_session_date} if sparse_session_date is not None else set()
+    stamped = []
     for symbol, spec in symbols.items():
         if not isinstance(symbol, str) or not symbol.strip():
             raise RunConfigError("symbol must be nonblank")
@@ -146,7 +147,7 @@ def validate(config):
         if options.get("range_minutes", 15) > 390:
             raise RunConfigError("opening range exceeds supported session")
         bars = spec["bars"]
-        if not isinstance(bars, list) or not bars:
+        if not isinstance(bars, list) or (not bars and sparse_session_date is None):
             raise RunConfigError("each symbol needs nonempty bars")
         previous = -1
         for bar in bars:
@@ -221,7 +222,8 @@ def validate(config):
     for spec in symbols.values():
         same_session(spec.get("session_open"))
         if (
-            spec["strategy"] == "vwap_touch_hold_v1"
+            sparse_session_date is None
+            and spec["strategy"] == "vwap_touch_hold_v1"
             and ms(spec["bars"][0]["bar_start"]) != start
         ):
             raise RunConfigError(

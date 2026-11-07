@@ -49,6 +49,23 @@ class VwapStrategy:
         self.stop: Decimal | None = None
         self.proposals: list[Proposal] = []
 
+    def on_missing_minute(self, start_ms: int, *, known: bool) -> None:
+        """Advance only continuity; bar counts, prices and VWAP do not change."""
+        contiguous = (
+            self._last_start is None
+            or start_ms == self._last_start + self.config.base_interval_minutes * 60_000
+        )
+        if known and contiguous and not self._history_invalid:
+            self._last_start = start_ms
+        else:
+            self._history_invalid = True
+            if self.state not in (
+                VwapState.IN_POSITION,
+                VwapState.PROPOSED,
+                VwapState.DONE,
+            ):
+                self.state = VwapState.EXPIRED
+
     def _update_vwap(self, bar: CompletedBar) -> Decimal | None:
         proxy = (bar.high + bar.low + bar.close) / 3
         self.cumulative_pv += proxy * bar.volume

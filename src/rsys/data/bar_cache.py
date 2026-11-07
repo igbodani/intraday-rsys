@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rsys.data.calendar import CALENDAR_VERSION, session_close_utc, session_open_utc
+from rsys.data.gaps import GAP_POLICY_VERSION, trade_request, validate_gap_evidence
 from rsys.data.timestamps import ns_to_datetime, parse_utc_timestamp_ns
 
 
@@ -164,7 +165,9 @@ class BarCache:
         payload = json.loads(raw)
         if (
             type(payload.get("schema_version")) is not int
-            or payload["schema_version"] != 1
+            or payload["schema_version"] not in (1, 2)
+            or payload["schema_version"] == 2
+            and payload.get("gap_policy_version") != GAP_POLICY_VERSION
             or payload.get("provider") != "alpaca"
             or payload.get("timing_basis")
             != "final_historical_bars_not_recorded_arrivals"
@@ -178,19 +181,38 @@ class BarCache:
         rows, quality = normalize_pages(payload["pages"], request)
         if rows != payload["bars"] or quality != payload["quality"]:
             raise ValueError("Cached normalization/coverage mismatch")
+        if payload["schema_version"] == 2:
+            gaps = validate_gap_evidence(
+                payload["gap_evidence"], request, quality["missing_minutes"]
+            )
+            if gaps != payload.get("gaps"):
+                raise ValueError("Cached gap classification mismatch")
+        elif "gaps" in payload or "gap_evidence" in payload:
+            raise ValueError("Gap evidence requires schema version 2")
         return payload
 
     def object_size(self, identity, request):
         """Actual pinned object bytes, excluding aliases and unrelated objects."""
         return self._path("objects/" + digest(request), identity).stat().st_size
 
-    def acquire(self, request, client, *, refresh=False):
-        index = self._path("requests", digest(request))
+    def acquire(self, request, client, *, refresh=False, gap_client=None):
+        index_key = (
+            request
+            if gap_client is None
+            else {"request": request, "gap_policy": GAP_POLICY_VERSION}
+        )
+        index = self._path("requests", digest(index_key))
         if index.exists() and not refresh:
             identity = json.loads(index.read_bytes())["object_id"]
             self.load(identity, request)
             return identity
-        pages = list(client.pages(request))
+        base_index = self._path("requests", digest(request))
+        if gap_client is not None and base_index.exists() and not refresh:
+            # Enrich a verified existing snapshot without downloading its bars again.
+            base = self.load(json.loads(base_index.read_bytes())["object_id"], request)
+            pages = base["pages"]
+        else:
+            pages = list(client.pages(request))
         bars, quality = normalize_pages(pages, request)
         payload = {
             "schema_version": 1,
@@ -203,6 +225,21 @@ class BarCache:
             "bars": bars,
             "quality": quality,
         }
+        if gap_client is not None:
+            evidence = []
+            for minute in quality["missing_minutes"]:
+                params = trade_request(request, minute)
+                evidence.append(
+                    {"request": params, "pages": list(gap_client.pages(params))}
+                )
+            payload.update(
+                schema_version=2,
+                gap_policy_version=GAP_POLICY_VERSION,
+                gap_evidence=evidence,
+                gaps=validate_gap_evidence(
+                    evidence, request, quality["missing_minutes"]
+                ),
+            )
         identity = digest(payload)
         target = self._path("objects/" + digest(request), identity)
         if not target.exists():

@@ -58,3 +58,11 @@ Pin one feed across current observations and their lookbacks. Reject mixed-feed 
 [2] Alpaca historical stock data sources. https://docs.alpaca.markets/us/docs/historical-stock-data-1
 
 The provider facts above motivate our proposed contracts; they do not verify the user's entitlement, historical action coverage or account behavior.
+
+## Sparse historical continuation
+
+The owner-approved 2026-11-07 continuation policy distinguishes reported volume-only
+minutes, complete feed queries reporting no trades, and unknown gaps. It never
+creates a price candle or infers zero from absent evidence. See
+[SPARSE_MARKET_DATA.md](SPARSE_MARKET_DATA.md) for availability, execution,
+cache-versioning, IEX estimate labeling and inconclusive-comparison rules.

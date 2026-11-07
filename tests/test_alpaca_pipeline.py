@@ -441,7 +441,7 @@ def test_public_invalid_input_retains_failure_without_raw_secrets(
 
 @pytest.mark.parametrize(
     "field,value",
-    [("schema_version", 2), ("provider", "other"), ("timing_basis", "recorded")],
+    [("schema_version", 3), ("provider", "other"), ("timing_basis", "recorded")],
 )
 def test_cache_rejects_unsupported_evidence_even_with_a_matching_hash(
     tmp_path, field, value

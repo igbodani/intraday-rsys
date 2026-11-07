@@ -15,9 +15,11 @@ gets its own retained evidence directory, even when its input or checks fail.
   accept the configuration and data. It does not promise a completed simulation,
   trades, profit or enough usable history for every decision.
 - `history_coverage_complete` covers observations across the entire declared
-  warmup search budget. Missing warmup minutes are warnings. Missing execution
-  minutes and invalid/missing objects block execution. A date used for both roles
-  follows the execution requirement.
+  warmup search budget. Missing warmup minutes are warnings. Under legacy `strict`
+  policy, missing execution minutes block replay. With `missing_bar_policy: continue`,
+  explained omissions count as covered volume evidence, and unknown gaps warn and
+  label results inconclusive. Invalid/missing objects still block execution.
+  See [sparse market data](SPARSE_MARKET_DATA.md).
 - `history_windows` separately counts prior sessions long enough to cover each
   execution session's full duration. A 210-minute prior session cannot supply a
   390-minute denominator. Earlier minutes may still be usable. The check neither

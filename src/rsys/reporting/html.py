@@ -38,7 +38,9 @@ def load_attempt(attempt_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]
             if not (attempt_dir.parent.parent / "runs.db").is_file():
                 raise ValueError("missing authoritative run outcome")
             if manifest.get("status") == "success":
-                load_run_manifest(attempt_dir.parent.parent, attempt_dir.name)
+                load_run_manifest(
+                    attempt_dir.parent.parent, attempt_dir.name, allow_diagnostic=True
+                )
             else:
                 storage = RunStorage(attempt_dir.parent.parent)
                 try:
@@ -213,6 +215,12 @@ def render_report(manifest: dict[str, Any], records: list[dict[str, Any]]) -> st
         if historical
         else "Synthetic, offline evidence; not a market-performance claim"
     )
+    if historical:
+        warning = (
+            manifest.get("estimate_label", "Feed-specific estimates") + ". " + warning
+        )
+        if manifest.get("result_quality") == "inconclusive_missing_data":
+            warning += ". INCONCLUSIVE: unexplained data gaps; all profit/loss figures below are diagnostic estimates, excluded from strategy comparisons"
     metrics = manifest.get("metrics", {})
     trade_count = metrics.get("completed_trade_count", 0)
     status_label = (

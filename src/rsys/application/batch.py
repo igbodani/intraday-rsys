@@ -116,6 +116,7 @@ class SessionBatch:
                 BarSessionRunner,
                 provider="alpaca",
                 feed=config["historical_source"]["feed"],
+                gaps_by_session=config["historical_source"].get("gaps_by_session"),
             )
             if config.get("evidence_type") == "historical_bar_estimate"
             else BarSessionRunner
@@ -264,7 +265,18 @@ class SessionBatch:
             ],
             cash,
         )
+        source = self.config.get("historical_source") or {}
+        quality = {}
+        if source:
+            quality = {
+                "estimate_label": source["estimate_label"],
+                "result_quality": "inconclusive_missing_data"
+                if source.get("unknown_gap_count")
+                else "estimate",
+                "unknown_gap_count": source.get("unknown_gap_count", 0),
+            }
         return {
+            **quality,
             "starting_equity": cash,
             "ending_equity": self.portfolio.equity({}),
             "metrics": asdict(
@@ -590,6 +602,8 @@ def _run_batch_cli(
                     raise
                 summary = batch.summary() if batch else {}
                 manifest.update(summary)
+                if summary.get("result_quality") == "inconclusive_missing_data":
+                    manifest["metrics_scope"] = "diagnostic_estimate_only"
                 manifest["funnel"] = diagnostics.snapshot()
                 rows = batch.trace if batch else []
 
@@ -625,7 +639,14 @@ def _run_batch_cli(
                         attempt / "metrics.json",
                         {
                             k: summary[k]
-                            for k in ("metrics", "multi_session_metrics", "risk_state")
+                            for k in (
+                                "metrics",
+                                "multi_session_metrics",
+                                "risk_state",
+                                "estimate_label",
+                                "result_quality",
+                                "unknown_gap_count",
+                            )
                             if k in summary
                         },
                     )

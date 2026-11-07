@@ -13,6 +13,7 @@ from rsys.application.historical import (
     plan_backtest,
 )
 from rsys.data.calendar import session_duration_minutes
+from rsys.data.gaps import KNOWN_GAPS, dataset_gaps, estimate_label
 from rsys.data.history import candidate_prior_session_dates
 from rsys.reporting.preflight import preflight_html
 from rsys.research.diagnostics import (
@@ -40,6 +41,9 @@ def inspect_data(config, result, invocation):
     plan = plan_backtest(config, result["access_log"], invocation)
     plan, cache = open_backtest_cache(plan)
     loaded = {}
+    sparse = config.get("missing_bar_policy", "strict") == "continue"
+    result["estimate_label"] = estimate_label(config["dataset"]["feed"])
+    result["missing_bar_policy"] = config.get("missing_bar_policy", "strict")
     for day, request in plan.requests.items():
         identity = config["objects"][day.isoformat()]
         role = (
@@ -84,11 +88,15 @@ def inspect_data(config, result, invocation):
             object_bytes=size,
             coverage_status="complete" if quality["coverage_complete"] else "gaps",
         )
+        gaps = dataset_gaps(dataset)
+        row["gap_classifications"] = gaps
+        if sparse and gaps and all(g["status"] in KNOWN_GAPS for g in gaps):
+            row["coverage_status"] = "explained_gaps"
         if not quality["coverage_complete"]:
             message = f"{day}: {len(quality['missing_minutes'])} absent minutes; absence is not verified zero volume"
-            result["errors" if day in plan.execution_dates else "warnings"].append(
-                message
-            )
+            result[
+                "errors" if day in plan.execution_dates and not sparse else "warnings"
+            ].append(message)
         invocation.event(
             DiagnosticEventCode.CACHE_READ,
             invocation.stage,
@@ -100,7 +108,9 @@ def inspect_data(config, result, invocation):
 
     rows = result["datasets"]
     result["history_coverage_complete"] = all(
-        r["coverage_status"] == "complete" for r in rows if r["role"] != "execution"
+        r["coverage_status"] in ("complete", "explained_gaps")
+        for r in rows
+        if r["role"] != "execution"
     )
     scan = config["scanner"]
     # Calendar comparability is distinct from complete observations and a nonzero
@@ -147,6 +157,11 @@ def inspect_data(config, result, invocation):
             ).iterencode(resolved)
         )
         result["can_execute"] = True
+        result["result_quality"] = (
+            "inconclusive_missing_data"
+            if resolved["historical_source"]["unknown_gap_count"]
+            else "estimate"
+        )
     result["check_completed"] = True
 
 

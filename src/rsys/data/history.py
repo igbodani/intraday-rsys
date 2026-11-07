@@ -95,9 +95,17 @@ def _validate_minute_payload(observation: MinuteObservation) -> None:
         or observation.volume < 0
     ):
         raise ValueError("minute volume must be a nonnegative finite Decimal")
-    if observation.status == ObservationStatus.NO_TRADE:
+    if observation.status in (
+        ObservationStatus.NO_TRADE,
+        ObservationStatus.NO_REPORTED_TRADES,
+    ):
         if observation.volume != 0 or observation.close is not None:
-            raise ValueError("a verified NO_TRADE minute must have zero volume and no close")
+            raise ValueError(
+                "a verified NO_TRADE minute must have zero volume and no close"
+            )
+    elif observation.status == ObservationStatus.VOLUME_ONLY:
+        if observation.volume <= 0 or observation.close is not None:
+            raise ValueError("VOLUME_ONLY requires positive volume and no close")
     elif observation.status == ObservationStatus.TRADED:
         if (
             not isinstance(observation.close, Decimal)
@@ -106,7 +114,7 @@ def _validate_minute_payload(observation: MinuteObservation) -> None:
         ):
             raise ValueError("a TRADED minute close must be a positive finite Decimal")
     else:
-        raise ValueError("minute status must be TRADED or NO_TRADE")
+        raise ValueError("unsupported minute observation status")
 
 
 def candidate_prior_session_dates(
@@ -181,7 +189,10 @@ def _build_session(
 ) -> SelectedSession:
     by_minute: dict[int, list[MinuteObservation]] = {}
     for observation in observations:
-        if observation.instrument_id == symbol and observation.session_date == session_date:
+        if (
+            observation.instrument_id == symbol
+            and observation.session_date == session_date
+        ):
             by_minute.setdefault(observation.minute_index, []).append(observation)
 
     selected: list[MinuteObservation] = []
@@ -276,7 +287,9 @@ def build_previous_session_observation(
     dollar-volume eligibility (docs/data_rules.md); never the RVOL lookback's same-elapsed-
     minute slice, which `build_minute_history_sessions` computes separately."""
     _aware_timestamp(as_of, "as_of")
-    dates = candidate_prior_session_dates(decision_date, max_lookback_calendar_sessions=1)
+    dates = candidate_prior_session_dates(
+        decision_date, max_lookback_calendar_sessions=1
+    )
     if not dates:
         return PreviousSessionObservation(None, None, None, (), MISSING_MINUTE)
     session_date = dates[0]
@@ -336,7 +349,9 @@ class MinuteHistoryProvider:
         max_lookback_calendar_sessions: int = 252,
     ) -> None:
         _positive_integer(elapsed_minutes, "elapsed_minutes")
-        _positive_integer(max_lookback_calendar_sessions, "max_lookback_calendar_sessions")
+        _positive_integer(
+            max_lookback_calendar_sessions, "max_lookback_calendar_sessions"
+        )
         _aware_timestamp(as_of, "as_of")
         self._history = history
         self._feed = feed
@@ -365,7 +380,9 @@ class MinuteHistoryProvider:
         self._session_builds[symbol] = builds
         return [b.history_session for b in builds]
 
-    def previous_session_close(self, symbol: str, decision_date: date) -> Decimal | None:
+    def previous_session_close(
+        self, symbol: str, decision_date: date
+    ) -> Decimal | None:
         return self._previous_session(symbol, decision_date).close
 
     def prior_session_dollar_volume_inputs(

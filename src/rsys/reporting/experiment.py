@@ -41,7 +41,7 @@ def experiment_html(result):
                 for value in (
                     row["name"],
                     row["state"],
-                    score.get("status", "unavailable"),
+                    score.get("estimate_label") or score.get("status", "unavailable"),
                     score.get("metrics", {}).get("net_change_currency", "unavailable"),
                     score.get("reason", ""),
                 )
@@ -50,7 +50,11 @@ def experiment_html(result):
         )
     return (
         '<!doctype html><html lang="en"><meta charset="utf-8"><title>Experiment</title>'
-        "<h1>Experiment scorecard — unscored</h1><p>No automatic winner or promotion. "
+        "<h1>Experiment scorecard — unscored</h1>"
+        + "<p>"
+        + escape(result.get("estimate_label", "Feed-specific estimates"))
+        + "</p>"
+        + "<p>No automatic winner or promotion. "
         "Drawdown is measured at session ends, not the worst intraday decline. "
         "Exit changes rerun the whole account; they are not common-entry attribution.</p>"
         "<table><tr><th>Arm</th><th>Execution</th><th>Evidence</th><th>Net change (currency)</th><th>Reason</th></tr>"

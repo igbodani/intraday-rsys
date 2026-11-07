@@ -18,7 +18,9 @@ from rsys.account.portfolio import Portfolio
 from rsys.account.risk import RiskManagedRunner, RiskMonitor
 from rsys.account.sizing import size_quantity
 from rsys.data.calendar import to_exchange_utc
+from rsys.data.gaps import KNOWN_GAPS
 from rsys.data.models import ProviderBarEvent
+from rsys.data.timestamps import parse_utc_timestamp_ns
 from rsys.execution.contracts import (
     commit_entry,
     commit_exit,
@@ -58,6 +60,7 @@ class BarSessionRunner(RiskManagedRunner):
         risk: RiskMonitor | None = None,
         costs: ExecutionCosts | None = None,
         history_scanner: MinuteHistoryScanner | None = None,
+        gaps_by_session: dict | None = None,
         provider: str = "synthetic",
         feed: str = "fixture",
         event_sink: TraceSink | None = None,
@@ -72,6 +75,7 @@ class BarSessionRunner(RiskManagedRunner):
         self.risk = risk
         self.costs = costs or ExecutionCosts()
         self.history_scanner = history_scanner
+        self.gaps = (gaps_by_session or {}).get(session_date, {})
         self.provider, self.feed = provider, feed
         self.origin_ns = (
             int(to_exchange_utc(datetime.fromisoformat(session_date)).timestamp())
@@ -165,6 +169,20 @@ class BarSessionRunner(RiskManagedRunner):
                             {"open": bar.open},
                         )
                     )
+        for symbol, gaps in sorted(self.gaps.items()):
+            for gap in gaps:
+                start = self._ms(parse_utc_timestamp_ns(gap["minute"]))
+                point = start + 60_000 + self.costs.feed_delay_ms
+                domain.append(
+                    self._event(
+                        f"gap:{symbol}:{start}",
+                        point,
+                        20,
+                        "missing_minute",
+                        symbol,
+                        {**gap, "bar_start_ms": start},
+                    )
+                )
         for point, prices in sorted(opens.items()):
             domain.append(
                 self._event(
@@ -230,6 +248,14 @@ class BarSessionRunner(RiskManagedRunner):
                 self.portfolio.mark_position(event.symbol, bar.close)
         elif event.kind == "interval_settle":
             self._settle(event.symbol, event.payload["bar"])
+        elif event.kind == "missing_minute":
+            known = event.payload["status"] in KNOWN_GAPS
+            strategy = self.strategies[event.symbol]
+            callback = getattr(strategy, "on_missing_minute", None)
+            if callback is not None:
+                callback(event.payload["bar_start_ms"], known=known)
+            if not known and event.symbol in self.pending_intents:
+                self._cancel(event.symbol, point, "DATA_GAP")
         elif event.kind == "decision":
             result = self._decide(event, point)
         elif event.kind == "accept":
@@ -279,6 +305,9 @@ class BarSessionRunner(RiskManagedRunner):
             "symbol": event.symbol,
             "account": self._snapshot(),
         }
+        if event.kind == "missing_minute":
+            row["gap"] = event.payload
+            row["position_open"] = event.symbol in self.portfolio.positions
         if self.risk is not None:
             row["risk"] = self.risk.snapshot()
         if event.kind == "decision" and self.history_scanner is None:

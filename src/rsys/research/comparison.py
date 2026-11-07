@@ -25,7 +25,9 @@ from rsys.research.storage import RunStorage, _validate_run_id
 from rsys.research.trace import file_sha256, verify_streamed_artifacts
 
 
-def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
+def load_run_manifest(
+    storage_root: Path, run_id: str, *, allow_diagnostic: bool = False
+) -> dict[str, Any]:
     try:
         _validate_run_id(run_id)
     except ValueError as exc:
@@ -106,9 +108,11 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
             required.add("scanner_history.json")
         if manifest.get("evidence_type") == "historical_bar_estimate":
             required.add("data_access.json")
-        if (
-            not required <= hashes.keys()
-            or manifest.get("metrics_scope") != "complete_attempt"
+        if not required <= hashes.keys() or manifest.get("metrics_scope") not in (
+            {"complete_attempt", "diagnostic_estimate_only"}
+            if allow_diagnostic
+            and manifest.get("result_quality") == "inconclusive_missing_data"
+            else {"complete_attempt"}
         ):
             raise CompareCliError("incomplete multi-session evidence")
         for name, expected in hashes.items():
@@ -121,6 +125,13 @@ def load_run_manifest(storage_root: Path, run_id: str) -> dict[str, Any]:
                 raise CompareCliError("retained artifact is missing") from exc
             if actual != expected:
                 raise CompareCliError("retained artifact integrity mismatch")
+    if (
+        not allow_diagnostic
+        and manifest.get("result_quality") == "inconclusive_missing_data"
+    ):
+        raise CompareCliError(
+            "unexplained data gaps: diagnostic estimates cannot be scored"
+        )
     return manifest
 
 
@@ -260,6 +271,7 @@ def compare_run_pair(
         permitted_difference=permitted_difference,
     )
     return {
+        **({"estimate_label": a["estimate_label"]} if "estimate_label" in a else {}),
         "run_a": run_id_a,
         "run_b": run_id_b,
         "assumption_diffs": diffs,
