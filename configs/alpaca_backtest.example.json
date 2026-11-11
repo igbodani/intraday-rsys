@@ -56,5 +56,6 @@
     "source": "",
     "start": "2024-01-02",
     "end": "2024-12-02"
-  }
+  },
+  "missing_bar_policy": "continue"
 }

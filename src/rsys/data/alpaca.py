@@ -18,6 +18,7 @@ class _NoRedirect(HTTPRedirectHandler):
 
 class AlpacaBarsClient:
     ENDPOINT = "https://data.alpaca.markets/v2/stocks/bars"
+    PAYLOAD_KEY = "bars"
 
     def __init__(self, *, transport=None, sleep=time.sleep, observer=None):
         if transport is not None and not callable(transport):
@@ -45,8 +46,8 @@ class AlpacaBarsClient:
                 }
             )
 
-    @staticmethod
-    def _request(params):
+    @classmethod
+    def _request(cls, params):
         key, secret = (
             os.environ.get("APCA_API_KEY_ID"),
             os.environ.get("APCA_API_SECRET_KEY"),
@@ -61,7 +62,7 @@ class AlpacaBarsClient:
         ):
             raise ValueError("Invalid Alpaca credential format")
         request = Request(
-            AlpacaBarsClient.ENDPOINT + "?" + urlencode(params),
+            cls.ENDPOINT + "?" + urlencode(params),
             headers={
                 "APCA-API-KEY-ID": key,
                 "APCA-API-SECRET-KEY": secret,
@@ -107,8 +108,10 @@ class AlpacaBarsClient:
                     raise ValueError(
                         "Alpaca transport unavailable after three attempts"
                     ) from None
-            if not isinstance(page, dict) or not isinstance(page.get("bars"), dict):
-                raise TypeError("Invalid Alpaca bars response")
+            if not isinstance(page, dict) or not isinstance(
+                page.get(self.PAYLOAD_KEY), dict
+            ):
+                raise TypeError(f"Invalid Alpaca {self.PAYLOAD_KEY} response")
             self.stats["page_count"] += 1
             self._observe("page")
             yield page
@@ -120,3 +123,10 @@ class AlpacaBarsClient:
             seen.add(token)
             params = {**params, "page_token": token}
         raise ValueError("Alpaca pagination exceeded safety limit")
+
+
+class AlpacaTradesClient(AlpacaBarsClient):
+    """Same authenticated, bounded transport for acquisition-only gap evidence."""
+
+    ENDPOINT = "https://data.alpaca.markets/v2/stocks/trades"
+    PAYLOAD_KEY = "trades"

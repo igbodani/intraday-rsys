@@ -132,3 +132,11 @@ uv run rsys final-evaluate  # expected blocked exit 5
 ```
 
 Output roots may accumulate independent attempts; run IDs prevent overwrite. Reports are artifacts of the attempt when requested with `run --report`. Generated evidence is not source code and should not be committed. Read [PUBLIC_SESSION_RUNS.md](PUBLIC_SESSION_RUNS.md) for this extension's verification and policy semantics; the repair-result documents retain earlier checks.
+
+## Sparse historical minutes (2026-11-07)
+
+Download can enrich missing minutes with cached trade evidence. Offline backtests
+can continue across explained omissions, preserve timers/position management,
+and retain unknown gaps as inconclusive evidence. IEX results are explicitly
+labeled estimates. See [SPARSE_MARKET_DATA.md](SPARSE_MARKET_DATA.md) for setup,
+limits and the regression-test inventory.

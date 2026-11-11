@@ -152,3 +152,13 @@ trial context is a plain record in `research/models.py`. The optional child cont
 is frozen at run creation, not patched into an existing run. Ordinary run APIs retain
 their behavior. `reporting/experiment.py` presents existing diagnostics with explicit
 units and unavailable states. See [EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md).
+
+## Sparse historical minute evidence
+
+`data/gaps.py` classifies acquisition-only historical trade evidence for omitted
+candles; `bar_cache.py` seals/revalidates it with the existing immutable bar objects.
+`MinuteGapCoverage` and the two additional observation statuses live in
+`data/models.py`. The existing bar runner schedules non-price gap publications,
+strategies retain only real price observations, and the scanner retains separate
+as-of supplemental volume snapshots. No second replay or execution engine exists.
+See [SPARSE_MARKET_DATA.md](SPARSE_MARKET_DATA.md).

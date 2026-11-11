@@ -144,6 +144,10 @@ def _pid_is_alive(pid: int) -> bool:
     if pid is None or pid <= 0:
         return False
     if sys.platform.startswith("win"):
+        # ctypes silently truncates Python integers to the 32-bit DWORD input.
+        # A malformed PID must not alias another process or imply death.
+        if type(pid) is not int or pid > 0xFFFFFFFF:
+            raise ValueError("PID is outside the Windows DWORD range")
         process_query_limited_information = 0x1000
         still_active = 259
         handle = _kernel32.OpenProcess(process_query_limited_information, False, pid)
@@ -462,8 +466,8 @@ def recovery_lock(root):
     try:
         try:
             if sys.platform.startswith("win"):
-                if os.fstat(fd).st_size == 0:
-                    os.write(fd, b"0")
+                # Windows permits byte locks beyond EOF. Do not modify an
+                # existing guard merely to attempt (or reject) recovery.
                 os.lseek(fd, 0, os.SEEK_SET)
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:

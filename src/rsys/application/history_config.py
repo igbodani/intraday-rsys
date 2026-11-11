@@ -124,10 +124,17 @@ def parse_scanner(config):
                 else None
             )
             volume = decimal(row["volume"])
-            if status == ObservationStatus.NO_TRADE and (
-                volume != 0 or close is not None
-            ):
+            if status in (
+                ObservationStatus.NO_TRADE,
+                ObservationStatus.NO_REPORTED_TRADES,
+            ) and (volume != 0 or close is not None):
                 raise RunConfigError("NO_TRADE requires zero volume and no close")
+            if status == ObservationStatus.VOLUME_ONLY and (
+                volume <= 0 or close is not None
+            ):
+                raise RunConfigError(
+                    "VOLUME_ONLY requires positive volume and no close"
+                )
             if status == ObservationStatus.TRADED and close is None:
                 raise RunConfigError("TRADED requires a close")
             observations.append(
@@ -155,6 +162,8 @@ def build_history_scanner(config, history, day, symbols):
     spec = config["scanner"]
     return MinuteHistoryScanner(
         history,
+        allow_sparse=config.get("historical_source", {}).get("missing_bar_policy")
+        == "continue",
         session_date=day,
         symbols=list(symbols),
         feed=spec["feed"],

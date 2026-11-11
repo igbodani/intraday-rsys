@@ -17,9 +17,9 @@ from rsys.data.features import (
     compute_dollar_volume_eligible,
     compute_session_gain,
 )
-from rsys.data.history import MinuteHistoryProvider
+from rsys.data.history import MinuteHistoryProvider, _select_minute
 from rsys.data.history_evidence import HistorySnapshots
-from rsys.data.models import MinuteSymbolHistory
+from rsys.data.models import MinuteGapCoverage, MinuteSymbolHistory, ObservationStatus
 from rsys.replay.views import ClosedOnlyContext
 from rsys.strategies.models import CandidateInput, HistoryScan
 from rsys.strategies.scanner import rank_candidates, ranking_digest, ranking_evidence
@@ -40,7 +40,9 @@ class MinuteHistoryScanner:
         max_lookback_calendar_sessions: int,
         min_dollar_volume: Decimal,
         max_current_bar_age_ms: int,
+        allow_sparse: bool = False,
     ):
+        self.allow_sparse = allow_sparse
         self.history = history
         self.session_date = session_date
         self.symbols = sorted(symbols)
@@ -94,10 +96,38 @@ class MinuteHistoryScanner:
             # Compute elapsed time from the completed interval, never delivery time.
             # A delayed publication must not request later denominator minutes.
             expected = list(range(self.open_ns, latest.bar_end_ns, MINUTE_NS))
+            supplemental = []
+            actual = {b.bar_start_ns for b in bars}
+            if self.allow_sparse:
+                record = self.history.get(symbol)
+                observations = record.observations if record else []
+                for start in expected:
+                    if start in actual:
+                        continue
+                    minute = (start - self.open_ns) // MINUTE_NS
+                    selected, reason = _select_minute(
+                        [
+                            o
+                            for o in observations
+                            if o.session_date == self.session_date
+                            and o.instrument_id == symbol
+                            and o.minute_index == minute
+                        ],
+                        feed=self.feed,
+                        as_of=as_of,
+                    )
+                    if reason is None and selected.status in (
+                        ObservationStatus.NO_TRADE,
+                        ObservationStatus.NO_REPORTED_TRADES,
+                        ObservationStatus.VOLUME_ONLY,
+                    ):
+                        supplemental.append(selected)
+                        actual.add(start)
             if (
                 elapsed <= 0
                 or latest.bar_end_ns > self.close_ns
-                or [b.bar_start_ns for b in bars] != expected
+                or sorted(actual) != expected
+                or len({b.bar_start_ns for b in bars}) != len(bars)
                 or any(
                     b.feed != self.feed
                     or b.interval != "1Min"
@@ -115,7 +145,13 @@ class MinuteHistoryScanner:
                 detail["current_status"] = "INCOMPLETE_CURRENT_MINUTES"
                 candidates.append(CandidateInput(symbol, None, None))
                 continue
-            volume = sum((b.volume for b in bars), Decimal(0))
+            volume = sum((b.volume for b in bars), Decimal(0)) + sum(
+                (o.volume for o in supplemental), Decimal(0)
+            )
+            if supplemental:
+                detail["current_gap_snapshot_id"] = self._retain(
+                    MinuteGapCoverage(self.session_date, tuple(supplemental))
+                )
             provider = MinuteHistoryProvider(
                 self.history,
                 feed=self.feed,

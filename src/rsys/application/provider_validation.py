@@ -244,7 +244,9 @@ def validate_sample(
         }
         result["checklist"]["coverage"] = {
             "status": "verified"
-            if checked["can_execute"] and checked["history_coverage_complete"]
+            if checked["can_execute"]
+            and checked["history_coverage_complete"]
+            and checked.get("result_quality") != "inconclusive_missing_data"
             else "failed",
             "basis": "pinned data preflight; missing minutes are not zero",
         }

@@ -841,13 +841,18 @@ class SyntheticSymbolHistory:
 
 
 class ObservationStatus(StrEnum):
-    """One minute-addressable observation's trade status. Only `TRADED`/`NO_TRADE` ever
-    exist as a `MinuteObservation`; a minute with no observation at all visible by a cutoff
-    is a coverage gap encoded by its absence, never a status value (docs/data_rules.md:
-    "missing bars are not proof of zero trades")."""
+    """A visible minute's declared price/volume evidence.
+
+    Absent observations remain unknown. NO_REPORTED_TRADES is explicitly weaker
+    than independently verified NO_TRADE: a completed historical feed query.
+    """
 
     TRADED = "TRADED"
     NO_TRADE = "NO_TRADE"  # verified: the feed confirms zero trades, not a guess
+    NO_REPORTED_TRADES = (
+        "NO_REPORTED_TRADES"  # complete historical query, feed-scoped estimate
+    )
+    VOLUME_ONLY = "VOLUME_ONLY"  # known volume, no price-eligible candle
 
 
 class UnitBasis(StrEnum):
@@ -904,7 +909,9 @@ class SelectedSession:
 
     history_session: HistorySession
     selected_revisions: tuple[MinuteObservation, ...]
-    exclusion_reason: str | None  # None means every required minute was available and usable
+    exclusion_reason: (
+        str | None
+    )  # None means every required minute was available and usable
 
 
 @dataclass(frozen=True)
@@ -931,3 +938,11 @@ class _ObservedBar:
 BucketIdentity = tuple[
     str, str, str, int
 ]  # (instrument_id, feed, interval, bar_start_ns)
+
+
+@dataclass(frozen=True)
+class MinuteGapCoverage:
+    """Visible supplementary volume; no price or executable reference."""
+
+    session_date: date
+    selected_revisions: tuple[MinuteObservation, ...]

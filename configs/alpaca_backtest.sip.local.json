@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "cache": "../data/alpaca-sip",
+  "dataset": {
+    "symbol": "AAPL",
+    "feed": "sip",
+    "asof": "-"
+  },
+  "purpose": "development",
+  "partitions": [
+    {
+      "name": "development",
+      "start": "2024-01-02",
+      "end": "2024-09-12"
+    },
+    {
+      "name": "validation",
+      "start": "2024-09-13",
+      "end": "2024-11-05"
+    },
+    {
+      "name": "final",
+      "start": "2024-11-06",
+      "end": "2024-12-31"
+    }
+  ],
+  "objects": {
+    "2024-08-01": "e5ac931e6bcd81cae77825465c45f5f7f9dbbdb794ebf10ff2fb374ce3176ce8",
+    "2024-08-02": "5e8d98e4d11f281e5250bed304feba0d2f04547e366dcefae2cfab7ed36ef403",
+    "2024-08-05": "cb833dfa7b06f1d0c01e2dac55fa690196a7692b9f5283646fb20b689661ddcf",
+    "2024-08-06": "5834b501025d91bc1d4ccd8ece7f49f6514d44839cceedc8ed1c2b5794d05657",
+    "2024-08-07": "8c161e918686979004ecb9a11fc710150b0db592c0622ff9297c564643e3e6ea",
+    "2024-08-08": "e324b351732d5342d202cae832e8026ec3c536b69249c013bb49fe6853e8d431",
+    "2024-08-09": "6300bf02704cd77a2d91122343fe7a3ae74ee146eed8fa96266cbf9bd10f24b4",
+    "2024-08-12": "ee37ec11dee74a5b785cff5d9ed14072f90dea12ae5de38db221791710435e90",
+    "2024-08-13": "e0741e47e7f43d8537e39e2fafff9def7b57f293e54d56357535e08dd1684348",
+    "2024-08-14": "f4efc8fa945a7d74c975f808293a5411d29281aca0d2d8d6fe40dc96ab374d44",
+    "2024-08-15": "234301f9500ca38cc34387fd03f1bed69055279bc6148263ce2d687056922785",
+    "2024-08-16": "6be19dd8a1b5877d2b6c026af7dfb6d7007932a70bfc42c78e2b3fc24d10c9c7",
+    "2024-08-19": "a1ca59e040721b8005fb76004528726172ea776f3ff45ba02cda32065c2e4fd8",
+    "2024-08-20": "f16250e6a57341485e5712eb4b654fcbe40bdb9e8efa560e1949a76bf49320f4",
+    "2024-08-21": "9cb8ede7296582fcaa15f89a36251ec298dd3f4cf580548dfb6f49c293da17ae",
+    "2024-08-22": "093efae87b28c8cd141fe303703981beb0593f247cf8c54b2fc45963f92625a3",
+    "2024-08-23": "9972e20a1b23ff8ab436b8b5a269a203917d2abe334db744d4d40db01ce2c858",
+    "2024-08-26": "50878fc91eaaee5c6a26a86c49a59099eb8ab305ba96c26d02404f3d2942132c",
+    "2024-08-27": "636b4d25ca1cce5f9482dab7855cdb61079c3cc233bdcfcf3ef21420ee2a4264",
+    "2024-08-28": "345e4d120c62044c99e18e24cde9fbce3a0eec466df546fde045d920d1981479",
+    "2024-08-29": "521b06cf6e6ee888341061d7471058291a8904fd773aa91a5788bfcc583591cf",
+    "2024-08-30": "f1157a3f52f82873253fd7e64d774befede46768797db7502746009ff5787ff4",
+    "2024-09-03": "e7f9a9a3ee2297ecb54227643d09933229829d1169fb9c6bc8216c19e2a397e5",
+    "2024-09-04": "678ef5adb4dc7e1abee9f4ecbda9010a44b657f9858b982fd7e2c996edf8aa4c",
+    "2024-09-05": "92f945797633b6c595947800bd5cc3a565ddebca5fe1a230eba316a37ae3b7dc",
+    "2024-09-06": "6bdd3fe7b8cf6f109fe409092ad5ffa11131f7b10cffb214df423e194f492b3c",
+    "2024-09-09": "19aec5fd1b913e2ad6317af6f773ba5f228ae6f019255922ee3047c4f7de9c48",
+    "2024-09-10": "d842e0ee5d8ad92e5e4aa44e0b373ded79c1799ab418f546faada75b4449e089",
+    "2024-09-11": "58120d56a05bf8d81abbb09c890368eb12c40947d582f62c161cac41e07c2491",
+    "2024-09-12": "a6da9d680e7572587773942d68597cf8746428ca7616a26d2f9991659a906747"
+  },
+  "sessions": [
+    "2024-08-29",
+    "2024-08-30",
+    "2024-09-03",
+    "2024-09-04",
+    "2024-09-05",
+    "2024-09-06",
+    "2024-09-09",
+    "2024-09-10",
+    "2024-09-11",
+    "2024-09-12"
+  ],
+  "timing_basis": "final_bars_modeled_at_end",
+  "account": {
+    "initial_cash": "1000",
+    "sizing": {
+      "quantity_step": "1",
+      "max_quantity": null
+    },
+    "risk": {
+      "per_trade_fraction": "0.03",
+      "daily_loss_fraction": "0.05",
+      "maximum_drawdown_fraction": "0.20",
+      "daily_loss_basis": "session_start_equity",
+      "halt_action": "cancel_entries_keep_exits"
+    },
+    "costs": {
+      "adverse_bps": "5",
+      "feed_delay_ms": 250,
+      "entry_fee": "0",
+      "exit_fee": "0"
+    },
+    "execution": {
+      "decision_latency_ms": 0,
+      "max_hold_ms": 3600000
+    },
+    "completion_policy": "require_flat",
+    "flatten_at": "12:55:00"
+  },
+  "strategy": {
+    "strategy": "orb_close_cross_v1",
+    "strategy_config": {}
+  },
+  "scanner": {
+    "top_n": 20,
+    "lookback_sessions": 20,
+    "max_lookback_calendar_sessions": 20,
+    "min_dollar_volume": "1000000",
+    "max_current_bar_age_ms": 90000
+  },
+  "action_review": {
+    "status": "verified_none",
+    "source": "Wikipedia 'Apple Inc.' corporate/financial history (en.wikipedia.org/wiki/Apple_Inc., retrieved 2026-11-11): no stock split recorded in 2024; most recent split was August 2020 (4-for-1). General encyclopedia cross-check, not a dedicated corporate-actions feed.",
+    "start": "2024-08-01",
+    "end": "2024-09-12"
+  },
+  "missing_bar_policy": "continue"
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cache": "../data/alpaca-sip",
+  "dataset": {
+    "symbol": "AAPL",
+    "feed": "sip",
+    "asof": "-"
+  },
+  "start": "2024-08-01",
+  "end": "2024-09-12",
+  "purpose": "development",
+  "partitions": [
+    {
+      "name": "development",
+      "start": "2024-01-02",
+      "end": "2024-09-12"
+    },
+    {
+      "name": "validation",
+      "start": "2024-09-13",
+      "end": "2024-11-05"
+    },
+    {
+      "name": "final",
+      "start": "2024-11-06",
+      "end": "2024-12-31"
+    }
+  ],
+  "gap_evidence": "trades"
+}

@@ -56,7 +56,7 @@ def cli(*args):
 
 def tree_bytes(root):
     return {
-        str(p.relative_to(root)): (
+        p.relative_to(root).as_posix(): (
             hashlib.sha256(p.read_bytes()).hexdigest(),
             p.stat().st_mtime_ns,
         )
@@ -367,8 +367,8 @@ def test_public_recovery_only_changes_dead_process_while_other_run_stays_live(tm
         assert inspect_attempt(out, dead_trace.parent.name).outcome == "crashed"
         assert inspect_attempt(out, live_trace.parent.name).outcome == "running"
         assert (
-            tree_bytes(out)[str(dead_trace.relative_to(out))]
-            == before[str(dead_trace.relative_to(out))]
+            tree_bytes(out)[dead_trace.relative_to(out).as_posix()]
+            == before[dead_trace.relative_to(out).as_posix()]
         )
         with pytest.raises(CompareCliError):
             load_run_manifest(out, dead_trace.parent.name)

@@ -49,6 +49,17 @@ class OrbStrategy:
         self.filled_today = False
         self.proposals: list[Proposal] = []
 
+    def on_missing_minute(self, start_ms: int, *, known: bool) -> None:
+        """An explained omission covers time, but contributes no OHLC or crossing."""
+        if known and self.session_open_ms <= start_ms < self._range_end_ms:
+            self._range_starts.add(start_ms)
+        elif not known and self.state not in (
+            OrbState.IN_POSITION,
+            OrbState.PROPOSED,
+            OrbState.DONE,
+        ):
+            self.state = OrbState.EXPIRED
+
     def on_completed_bar(
         self, bar: CompletedBar, *, is_candidate: bool
     ) -> Proposal | None:

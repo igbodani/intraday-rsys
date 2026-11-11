@@ -71,3 +71,11 @@ Trading session and data session are separate fields. Regular-session trading ma
 - **Scanner:** liquidity determines eligibility; RVOL determines rank; session gain is a tie-break, not a meaningful second ranking factor for most observations. This deliberately narrows the original product's broad movement/volume/liquidity wording. A composite or bucketed ranking is a later version requiring a separate hypothesis and comparison.
 - **VWAP:** the first baseline is touch-and-hold. It does not answer the original broader reclaim question. A close-below-then-reclaim variant remains unimplemented and unspecified.
 - Early-close lookbacks, corporate actions and feed limitations now have exact proposed contracts in `data_rules.md`; they are not silently inherited provider defaults.
+
+## Owner direction: sparse historical data (2026-11-07)
+
+Continue replay across missing candles; label IEX results as IEX-based estimates.
+The explicit `continue` policy and evidence limitations are in
+[SPARSE_MARKET_DATA.md](SPARSE_MARKET_DATA.md). Unknown gaps do not become zero;
+unreconciled outcomes remain inconclusive and cannot be scored. This approval
+does not approve live execution, resolve D22, or change risk/promotion thresholds.

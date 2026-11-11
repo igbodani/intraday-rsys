@@ -327,7 +327,15 @@ def validate_batch(config, *, allow_historical=False):
                 "scanner_inputs": session.get("scanner_inputs", {}),
                 "execution": {"flatten_at": flatten},
             }
-            if validate(legacy) != session["date"]:
+            sparse = (
+                allow_historical
+                and config.get("historical_source", {}).get("missing_bar_policy")
+                == "continue"
+            )
+            if (
+                validate(legacy, sparse_session_date=day if sparse else None)
+                != session["date"]
+            ):
                 raise RunConfigError("bar dates differ from session date")
         else:
             for symbol, spec in symbols.items():

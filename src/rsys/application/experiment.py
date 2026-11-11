@@ -9,6 +9,7 @@ from rsys.application.experiment_config import validate_experiment
 from rsys.application.file_attempt import file_attempt
 from rsys.application.historical import backtest, load_request
 from rsys.application.offline import deny_python_network
+from rsys.data.gaps import estimate_label
 from rsys.reporting.experiment import experiment_html, scorecard_metrics
 from rsys.research.comparison import compare_run_pair, load_run_manifest
 from rsys.research.diagnostics import (
@@ -62,6 +63,7 @@ def build_scorecards(result, root, permitted_axis):
             own = scorecard_metrics(manifest, metrics)
             row["scorecard"] = {
                 "status": "available",
+                "estimate_label": manifest.get("estimate_label"),
                 "metrics": own,
                 "comparison": {
                     "status": "unavailable",
@@ -119,6 +121,7 @@ def run_experiment(path, out_dir):
         writer.use_config({"plan": raw, "base": base})
         atomic_write_json(attempt / "experiment.json", result)
         plan, arms = validate_experiment(raw, base, result["access_log"], writer)
+        result["estimate_label"] = estimate_label(base["dataset"]["feed"])
         result["arms"] = [
             {"name": arm.name, "state": "not_started", "config": arm.config}
             for arm in arms

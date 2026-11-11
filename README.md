@@ -4,6 +4,9 @@ Offline, synthetic-first implementation of the intraday research system governed
 
 Start with [the package and model map](docs/ARCHITECTURE.md) and [the documentation index](docs/README.md). Each functional package owns a `models.py`; runtime services live beside it.
 
+For Windows cache-path and recovery fixes, test commands and platform-specific
+test limits, see [Windows portability verification](docs/WINDOWS_PORTABILITY_REPAIR.md).
+
 For agent-assisted development, use [the Copilot workflow](docs/COPILOT_WORKFLOW.md): four specialist agents, project/path instructions, reusable skills, task prompts and automated configuration/test checks.
 
 The next agent work order is [the backtest-readiness plan](docs/agent-workflow/backtest-readiness-plan.md), with ordered [development tickets](docs/agent-workflow/backtest-readiness-tickets.md) and a [testing plan](docs/agent-workflow/backtest-readiness-tests.md). BR-01–BR-06 provide streaming evidence, progress, status/recovery, [local-data preflight](docs/DATA_PREFLIGHT.md), [compact history evidence](docs/HISTORY_EVIDENCE.md) and [explicitly enabled Alpaca validation](docs/ALPACA_PROVIDER_VALIDATION.md). The [experiment runner](docs/EXPERIMENT_RUNNER.md) now executes finite plans on pinned local data and retains every attempt. Real-provider validation remains unrun; the next step is the explicitly enabled bounded sample and BR-07 manual reconciliation.
@@ -62,3 +65,6 @@ Quote freshness is measured from availability at the decision clock under the de
 The account/session layer is a tested synthetic subset of M2. Public trade/multi-session execution and explicit research risk/cost policies now exist. The initial Alpaca raw-bar download/cache path and date guards now exist. Next, verify credentials/feed coverage and a small real-data sample, resolve research settings and expand the bounded data/action/calendar support. The public history scanner derives scores from declared minute observations at each bounded replay decision; audited provider history is still missing. The detailed gates are in [CURRENT_SYSTEM_AND_NEXT_STEPS.md](docs/CURRENT_SYSTEM_AND_NEXT_STEPS.md).
 
 `fixture`, `run` and `compare` execute real software paths. `final-evaluate` is deliberately blocked with exit 5. `rsys replay` remains data-only; `rsys run` accepts legacy synthetic bars or the new explicit bar/trade session schema. Version-2 composition requires flat intermediate sessions; a final open snapshot must be explicitly allowed and remains diagnostic. No real data acquisition, broker account, historical-performance evidence, optimizer, paper/live trading or final evaluation is implemented. D09/D12/D22 remain Open; D13/D16/D17 are Proposed. D10/D11 are enforced when explicitly configured through the version-2 synthetic interface; the pending research YAML and historical experiment protocol remain blocked.
+
+Missing IEX candles? See [sparse market data](docs/SPARSE_MARKET_DATA.md) for
+cache enrichment, continued replay, and clearly labeled IEX-based estimates.

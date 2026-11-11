@@ -262,6 +262,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
     print(f"ok: compared {run_a} vs {run_b}")
     print(f"assumption_diffs: {result['assumption_diffs']}")
+    if result.get("estimate_label"):
+        print(f"evidence: {result['estimate_label']}")
     print(f"ending_equity_delta: {result['ending_equity_delta']}")
     print(f"report: {report_path}")
     return EXIT_SUCCESS
@@ -335,6 +337,8 @@ def _cmd_data(args):
         print(f"manifest: {manifest}")
     else:
         print(f"ok: {len(summary['fills'])} simulated fill(s)")
+        if summary.get("estimate_label"):
+            print(f"evidence: {summary['estimate_label']}; {summary['result_quality']}")
         print(f"run_id: {run_id}\ntrace: {trace}\nmanifest: {manifest}")
     return EXIT_SUCCESS
 
