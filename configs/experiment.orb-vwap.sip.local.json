@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "study_id": "aapl_sip_orb_vs_vwap_001",
+  "hypothesis": "Compare ORB and VWAP after costs using identical data, scanner, account and execution settings.",
+  "study_kind": "complete_system",
+  "base_config": "alpaca_backtest.sip.local.json",
+  "variants": [
+    {
+      "name": "vwap",
+      "changes": [
+        {
+          "path": ["strategy", "strategy"],
+          "value": "vwap_touch_hold_v1"
+        },
+        {
+          "path": ["strategy", "strategy_config"],
+          "value": {}
+        }
+      ]
+    }
+  ],
+  "permitted_axis": "strategies",
+  "trial_limit": 2,
+  "counting": "all_execution_attempts",
+  "failure_policy": "stop",
+  "external_attempts": []
+}
