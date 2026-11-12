@@ -11,6 +11,8 @@ For agent-assisted development, use [the Copilot workflow](docs/COPILOT_WORKFLOW
 
 The next agent work order is [the backtest-readiness plan](docs/agent-workflow/backtest-readiness-plan.md), with ordered [development tickets](docs/agent-workflow/backtest-readiness-tickets.md) and a [testing plan](docs/agent-workflow/backtest-readiness-tests.md). BR-01–BR-06 provide streaming evidence, progress, status/recovery, [local-data preflight](docs/DATA_PREFLIGHT.md), [compact history evidence](docs/HISTORY_EVIDENCE.md) and [explicitly enabled Alpaca validation](docs/ALPACA_PROVIDER_VALIDATION.md). The [experiment runner](docs/EXPERIMENT_RUNNER.md) now executes finite plans on pinned local data and retains every attempt. Real-provider validation remains unrun; the next step is the explicitly enabled bounded sample and BR-07 manual reconciliation.
 
+The next independent engineering task is [compact run evidence](docs/agent-workflow/compact-run-evidence-plan.md): reduce duplicated decision records in manifests, session summaries and HTML while preserving trades, integrity checks and legacy readers. The document is an implementation and test plan; the storage change is not implemented yet.
+
 ## Current behavior
 
 - Configuration: isolated fixture, research and replay profiles; unresolved research decisions remain named blockers.
