@@ -3,24 +3,35 @@
 import hashlib
 import json
 import re
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from rsys.data.bar_cache import encode, request_identity
-from rsys.data.calendar import session_close_utc
+from rsys.data.bar_cache import encode, validate_stock_request
+from rsys.data.calendar import to_exchange_utc
 from rsys.data.models import TapePrint
+from rsys.data.tape_calendar import tape_hours
 from rsys.data.timestamps import parse_utc_timestamp_ns
 
 
-def tape_request(symbol, day, feed):
-    params = request_identity(symbol, day, feed, "-")
-    del params["adjustment"], params["timeframe"]
-    params["end"] = (session_close_utc(day) - timedelta(seconds=1)).strftime(
-        "%Y-%m-%dT%H:%M:%S.999999999Z"
-    )
-    return params
+def tape_request(symbol, day, feed, mode="regular"):
+    validate_stock_request(symbol, feed, "-")
+    hours = tape_hours(day, mode)
+    midnight = datetime.combine(day, time.min)
+    opening = to_exchange_utc(midnight + timedelta(minutes=hours.data_open))
+    closing = to_exchange_utc(midnight + timedelta(minutes=hours.data_close))
+    return {
+        "symbols": symbol,
+        "start": opening.isoformat(),
+        "end": (closing - timedelta(seconds=1)).strftime(
+            "%Y-%m-%dT%H:%M:%S.999999999Z"
+        ),
+        "feed": feed,
+        "asof": "-",
+        "sort": "asc",
+        "limit": 10000,
+    }
 
 
 _PRICE = frozenset("FKLOTX56")
@@ -35,7 +46,7 @@ _MINUTE_CODES = {
 
 # Alpaca Market Data FAQ, minute (M) rows for US equity tapes.
 # A print may update volume without updating price. Use the most restrictive flag.
-def minute_flags(tape, conditions):
+def minute_flags(tape, conditions, *, extended=False):
     price_codes, volume_codes, regular = _MINUTE_CODES[tape]
     excluded = {"M", "Q", "9"}
     codes = set(conditions)
@@ -43,10 +54,14 @@ def minute_flags(tape, conditions):
         raise ValueError(
             f"Unmapped Alpaca minute conditions for tape {tape}: {conditions!r}"
         )
-    return codes <= price_codes, not bool(codes & excluded), codes <= {regular, "F"}
+    return (
+        codes <= price_codes,
+        not bool(codes & excluded),
+        codes <= ({regular, "F", "T"} if extended else {regular, "F"}),
+    )
 
 
-def normalize_tape(pages, params, *, classify=True):
+def normalize_tape(pages, params, *, classify=True, extended_window=None):
     """Deduplicate rerendered pages by venue/ID. Conflicting identities fail."""
     if (
         not pages
@@ -95,7 +110,11 @@ def normalize_tape(pages, params, *, classify=True):
                 continue
             seen[key] = signature
             if classify:
-                flags = minute_flags(row["z"], conditions)
+                outside_regular = (
+                    extended_window is not None
+                    and not extended_window[0] <= stamp < extended_window[1]
+                )
+                flags = minute_flags(row["z"], conditions, extended=outside_regular)
                 prints.append(
                     TapePrint(
                         stamp - start, symbol, f"{venue}:{seq}", price, size, *flags
@@ -128,7 +147,7 @@ def acquire_tape(cache, params, client):
     return pin
 
 
-def load_tape(cache, params, pin):
+def load_tape(cache, params, pin, *, extended_window=None):
     if not isinstance(pin, str) or not re.fullmatch("[0-9a-f]{64}", pin):
         raise ValueError("Invalid trade tape pin")
     raw = (Path(cache) / "trade-tapes" / (pin + ".json")).read_bytes()
@@ -137,4 +156,4 @@ def load_tape(cache, params, pin):
     blob = json.loads(raw, parse_float=Decimal)
     if blob["format"] != "alpaca_stock_trades_v1" or blob["request"] != params:
         raise ValueError("Trade tape request mismatch")
-    return normalize_tape(blob["pages"], params)
+    return normalize_tape(blob["pages"], params, extended_window=extended_window)

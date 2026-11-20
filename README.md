@@ -13,7 +13,7 @@ The next agent work order is [the backtest-readiness plan](docs/agent-workflow/b
 
 The next independent engineering task is [compact run evidence](docs/agent-workflow/compact-run-evidence-plan.md): reduce duplicated decision records in manifests, session summaries and HTML while preserving trades, integrity checks and legacy readers. The document is an implementation and test plan; the storage change is not implemented yet.
 
-For a multi-symbol scanner, entries before a minute closes, and ORB versus VWAP experiments on historical trades, follow [the trade replay walkthrough](docs/INTRABAR_TRADE_REPLAY.md).
+For a fixed stock list, a multi-year date range, selectable regular or extended hours, and ORB versus VWAP experiments on individual trades, follow [the trade replay walkthrough](docs/INTRABAR_TRADE_REPLAY.md).
 
 ## Current behavior
 

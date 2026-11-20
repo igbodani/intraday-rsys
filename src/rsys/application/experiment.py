@@ -104,6 +104,7 @@ def build_scorecards(result, root, permitted_axis):
                     "status": "available",
                     "estimate_label": data["estimate_label"],
                     "metrics": scorecard_metrics(data, data),
+                    "calendar_year_results": data.get("calendar_year_results", []),
                     "comparison": comparison,
                 }
                 continue

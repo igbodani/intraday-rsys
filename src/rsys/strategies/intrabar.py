@@ -20,17 +20,21 @@ BASE_STRATEGIES = {
 class TapeVolumeHistory:
     """Cumulative eligible volume at the same elapsed instant on a prior day."""
 
-    def __init__(self, prints, duration_ms):
+    def __init__(self, prints, duration_ms, regular_offsets_ns, ratio=Decimal(1)):
         self.times, self.volumes = [], []
         self.close = None
+        self.regular_volume = Decimal(0)
         self.duration_ns = duration_ms * 1_000_000
         volume = Decimal(0)
         for p in prints:
-            if p.updates_price:
-                self.close = p.price
+            if regular_offsets_ns[0] <= p.offset_ns < regular_offsets_ns[1]:
+                if p.updates_price:
+                    self.close = p.price / ratio
+                if p.updates_volume:
+                    self.regular_volume += p.size * ratio
             if p.updates_volume:
                 self.times.append(p.offset_ns)
-                volume += p.size
+                volume += p.size * ratio
                 self.volumes.append(volume)
 
     def volume_at(self, elapsed_ns):
@@ -41,15 +45,25 @@ class TapeVolumeHistory:
 
 
 class TradeScanner:
-    def __init__(self, history, *, lookback, top_n, max_age_ms, min_dollar_volume):
+    def __init__(
+        self,
+        history,
+        *,
+        lookback,
+        top_n,
+        max_age_ms,
+        min_dollar_volume,
+        regular_offsets_ns,
+    ):
         self.history = history  # newest prior session first, independently per symbol
         self.top_n, self.max_age_ns = top_n, max_age_ms * 1_000_000
         self.lookback = lookback
+        self.regular_offsets_ns = regular_offsets_ns
         self.eligible = {}
         for symbol, days in history.items():
             prior = days[0]
             self.eligible[symbol] = compute_dollar_volume_eligible(
-                prior_session_volume=prior.volumes[-1] if prior.volumes else None,
+                prior_session_volume=prior.regular_volume,
                 prior_session_close=prior.close,
                 min_dollar_volume=min_dollar_volume,
             )
@@ -60,7 +74,8 @@ class TradeScanner:
         if p.updates_volume:
             self.volume[p.symbol] += p.size
         if p.updates_price:
-            self.opens.setdefault(p.symbol, p.price)
+            if self.regular_offsets_ns[0] <= p.offset_ns < self.regular_offsets_ns[1]:
+                self.opens.setdefault(p.symbol, p.price)
             self.prices[p.symbol] = p.price
             self.last[p.symbol] = p.offset_ns
 

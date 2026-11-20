@@ -707,6 +707,7 @@ class SessionResult:
     fills: list[FillRecord]
     contexts: list
     ending_equity: Decimal
+    trading_window_ms: tuple[int, int] | None = None
 
 
 RsysConfig = FixtureConfig | ResearchConfig | ReplayConfig

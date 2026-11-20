@@ -41,6 +41,14 @@ def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return [(start, end) for start, end in merged]
 
 
+def _trading_window(result):
+    if result.trading_window_ms is not None:
+        return result.trading_window_ms
+    opening = session_open_local(result.session_date)
+    start = (opening.hour * 60 + opening.minute) * 60_000
+    return start, start + session_duration_minutes(result.session_date) * 60_000
+
+
 def session_open_intervals(result: SessionResult) -> list[tuple[int, int]]:
     """Pairs each `FILLED` fill with its own symbol's next `EXIT` fill. Fill timestamps
     are milliseconds since exchange-local midnight, matching both runners. Return elapsed
@@ -48,9 +56,8 @@ def session_open_intervals(result: SessionResult) -> list[tuple[int, int]]:
     fills end (no `EXIT` recorded -- allowed when `flatten_at_ms` is unset) is closed out
     at the session's own scheduled close for this diagnostic only; it does not assert the
     position was actually flattened there."""
-    opening = session_open_local(result.session_date)
-    open_ms = (opening.hour * 60 + opening.minute) * 60_000
-    duration_ms = session_duration_minutes(result.session_date) * 60_000
+    open_ms, close_ms = _trading_window(result)
+    duration_ms = close_ms - open_ms
 
     def elapsed(point):
         return max(0, min(point - open_ms, duration_ms))
@@ -75,7 +82,8 @@ def compute_exposure(results: list[SessionResult]) -> ExposureResult:
     total_open_ms = 0
     total_scheduled_ms = 0
     for result in results:
-        scheduled_ms = session_duration_minutes(result.session_date) * 60_000
+        start, end = _trading_window(result)
+        scheduled_ms = end - start
         total_scheduled_ms += scheduled_ms
         total_open_ms += sum(
             end - start

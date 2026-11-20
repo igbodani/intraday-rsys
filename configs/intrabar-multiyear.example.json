@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "cache": "../data/alpaca",
+  "feed": "sip",
+  "symbols": [
+    "AAPL",
+    "MSFT"
+  ],
+  "partitions": [
+    {
+      "name": "development",
+      "start": "2018-12-01",
+      "end": "2025-12-31"
+    }
+  ],
+  "purpose": "development",
+  "print_policy": "alpaca_day_limit_v1",
+  "timing_basis": "final_trades_delayed_ms_v1",
+  "account": {
+    "initial_cash": "1000",
+    "sizing": {
+      "quantity_step": "1",
+      "max_quantity": null
+    },
+    "risk": {
+      "per_trade_fraction": "0.03",
+      "daily_loss_fraction": "0.05",
+      "maximum_drawdown_fraction": "0.20",
+      "daily_loss_basis": "session_start_equity",
+      "halt_action": "cancel_entries_keep_exits"
+    },
+    "costs": {
+      "adverse_bps": "5",
+      "feed_delay_ms": 250,
+      "entry_fee": "0",
+      "exit_fee": "0"
+    },
+    "execution": {
+      "decision_latency_ms": 0,
+      "max_hold_ms": 3600000
+    },
+    "completion_policy": "require_flat",
+    "flatten_minutes_before_close": 5
+  },
+  "strategy": {
+    "strategy": "orb_forming_cross_v1",
+    "strategy_config": {}
+  },
+  "scanner": {
+    "top_n": 1,
+    "lookback_sessions": 5,
+    "max_price_age_ms": 90000,
+    "min_dollar_volume": "1000000"
+  },
+  "action_review": {
+    "AAPL": {
+      "status": "pending",
+      "source": "",
+      "start": "2018-12-01",
+      "end": "2025-12-31"
+    },
+    "MSFT": {
+      "status": "pending",
+      "source": "",
+      "start": "2018-12-01",
+      "end": "2025-12-31"
+    }
+  },
+  "date_range": {
+    "start": "2019-01-01",
+    "end": "2025-12-31"
+  },
+  "session_mode": "extended",
+  "strategy_anchor": "eligible_open",
+  "limit_offset_bps": "10",
+  "evidence_detail": "signals"
+}

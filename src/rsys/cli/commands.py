@@ -577,7 +577,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.set_defaults(func=_cmd_compare)
 
     for name, help_text in (
-        ("trade-download", "Cache regular-session Alpaca stock trade tapes"),
+        ("trade-download", "Cache Alpaca stock trades for the selected session hours"),
         (
             "trade-backtest",
             "Replay pinned trade tapes with an intrabar scanner and strategies",

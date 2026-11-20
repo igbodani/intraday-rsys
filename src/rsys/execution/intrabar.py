@@ -1,10 +1,12 @@
 """Replay pinned, final historical prints with an explicitly modeled delivery clock."""
 
 from dataclasses import asdict, replace
+from decimal import Decimal
 from heapq import heappop, heappush, merge
 from itertools import groupby
 
 from rsys.account.acceptance import sort_proposals
+from rsys.account.money import ceil_step, floor_step
 from rsys.execution.errors import IncompleteSessionError
 from rsys.execution.models import DecisionRecord, Trade
 from rsys.execution.trade import TradeInputRunner
@@ -29,13 +31,30 @@ class SessionTimers:
 class IntrabarSession(TradeInputRunner):
     """Share sizing, acceptance, fills, timers and risk with the trade execution path."""
 
-    def play(self, tapes, scanner, opening, closing, write):
+    def play(
+        self,
+        tapes,
+        scanner,
+        opening,
+        closing,
+        write,
+        *,
+        order_window,
+        strategy_open,
+        limit_bps,
+        full_evidence=True,
+    ):
         if self._ran:
             raise ValueError("A session can only be replayed once")
         self._ran = True
         self.live_scan, self.write = scanner, write
+        self.full_evidence = full_evidence
         self.forming, self.minute_volume = {}, {}
         self.opening = opening
+        self.order_open, self.order_close = order_window
+        self.strategy_open = strategy_open
+        self.limit_bps = limit_bps
+        self.sell_limits = {}
         self.ready_ns = {}
         self.engine = SessionTimers()
         self._begin_risk_session()
@@ -68,6 +87,11 @@ class IntrabarSession(TradeInputRunner):
             self._dispatch(event)
             self.write(self.trace[0])
             self.trace.clear()
+            if self.limit_bps is not None:
+                for symbol in sorted(self.exit_due - self.sell_limits.keys()):
+                    self._arm_sell_limit(
+                        symbol, self.live_scan.prices[symbol], event.available_at_ns
+                    )
             self._write_fills(start, event.available_at_ns)
 
     def _close_minute(self, boundary, lag):
@@ -81,28 +105,31 @@ class IntrabarSession(TradeInputRunner):
         )
         for symbol, strategy in self.strategies.items():
             bar = self.forming.get(symbol)
+            if start < self.strategy_open:
+                continue
             if bar is None:
                 strategy.on_missing_minute(start, known=True)
             else:
                 strategy.on_completed_bar(
                     replace(bar, available_at_ms=point), is_candidate=False
                 )
-        self.write(
-            {
-                "kind": "minute_close",
-                "available_at_ns": self._ns(point),
-                "available_at_ms": point,
-                "bar_start_ms": start,
-                **decision,
-                "bars": {
-                    s: asdict(replace(b, available_at_ms=point))
-                    for s, b in self.forming.items()
-                },
-                "ranked": scan.ranked,
-                "top": scan.top,
-                "scanner": rows,
-            }
-        )
+        if self.full_evidence or decision["signals"]:
+            self.write(
+                {
+                    "kind": "minute_close",
+                    "available_at_ns": self._ns(point),
+                    "available_at_ms": point,
+                    "bar_start_ms": start,
+                    **decision,
+                    "bars": {
+                        s: asdict(replace(b, available_at_ms=point))
+                        for s, b in self.forming.items()
+                    },
+                    "ranked": scan.ranked,
+                    "top": scan.top,
+                    "scanner": rows,
+                }
+            )
         self._write_fills(before, self._ns(point))
         self.forming.clear()
         self.minute_volume.clear()
@@ -145,7 +172,12 @@ class IntrabarSession(TradeInputRunner):
                 self.forming[s] = replace(
                     bar, available_at_ms=point, volume=self.minute_volume[s]
                 )
-            if p.executable:
+            if (
+                p.executable
+                and self.order_open
+                <= self.opening + elapsed_ns // 1_000_000
+                < self.order_close
+            ):
                 batch.append(
                     (
                         s,
@@ -163,7 +195,10 @@ class IntrabarSession(TradeInputRunner):
         # Manage all held positions, even when the symbol has left the top group.
         for s, t in batch:
             if s in self.portfolio.positions:
-                self._attempt_exit(s, t, point)
+                if self.limit_bps is None:
+                    self._attempt_exit(s, t, point)
+                else:
+                    self._check_day_limit_exit(s, t, point, source_ns, available_ns)
         for proposal in sort_proposals(
             [i.proposal for i in self.pending_intents.values()]
         ):
@@ -173,29 +208,35 @@ class IntrabarSession(TradeInputRunner):
                     symbol == s
                     and s in self.pending_intents
                     and source_ns >= self.ready_ns[s]
+                    and (
+                        self.limit_bps is None
+                        or self.costs.buy_price(t.price)
+                        <= self._limit_price(proposal.signal_price, buy=True)
+                    )
                 ):
                     self._attempt_entry(s, t, point)
         self._enforce_risk(point)
         self.portfolio.assert_invariants()
-        self.write(
-            {
-                "kind": "trade_batch",
-                "available_at_ms": point,
-                "available_at_ns": available_ns,
-                "market_time_ns": source_ns,
-                "prints": [asdict(p) for p in prints],
-                "forming": {
-                    s: asdict(b) for s, b in self.forming.items() if s in changed
-                },
-                "scanner": rows,
-                "ranked": scan.ranked,
-                "top": scan.top,
-                "excluded": scan.excluded,
-                **decision,
-                "risk_halt": self.risk.halt_reason,
-                "equity": self.portfolio.equity({}),
-            }
-        )
+        if self.full_evidence or decision["signals"]:
+            self.write(
+                {
+                    "kind": "trade_batch",
+                    "available_at_ms": point,
+                    "available_at_ns": available_ns,
+                    "market_time_ns": source_ns,
+                    "prints": [asdict(p) for p in prints],
+                    "forming": {
+                        s: asdict(b) for s, b in self.forming.items() if s in changed
+                    },
+                    "scanner": rows,
+                    "ranked": scan.ranked,
+                    "top": scan.top,
+                    "excluded": scan.excluded,
+                    **decision,
+                    "risk_halt": self.risk.halt_reason,
+                    "equity": self.portfolio.equity({}),
+                }
+            )
         self._write_fills(before, available_ns)
 
     def _decide_forming(self, scan, previous, point, available_ns):
@@ -204,7 +245,11 @@ class IntrabarSession(TradeInputRunner):
             bar = self.forming.get(s)
             # Evaluate fresh prices on eligible ticks, with the cross-symbol rank
             # after every publication sharing this instant has been applied.
-            if bar is None:
+            if (
+                bar is None
+                or bar.bar_start_ms < self.strategy_open
+                or not self.order_open <= point < self.order_close
+            ):
                 continue
             proposal = preview_entry(
                 self.strategies[s],
@@ -231,7 +276,60 @@ class IntrabarSession(TradeInputRunner):
                 )
         return {
             "proposed": record.proposed,
-            "signals": [asdict(p) for p in proposals],
+            "signals": [
+                {
+                    **asdict(p),
+                    **(
+                        {"buy_limit": self._limit_price(p.signal_price, buy=True)}
+                        if self.limit_bps is not None
+                        else {}
+                    ),
+                }
+                for p in proposals
+            ],
             "accepted": record.accepted,
             "rejected": record.rejected,
         }
+
+    def _limit_price(self, reference, *, buy):
+        offset = self.limit_bps / 10000
+        raw = reference * (1 + offset if buy else 1 - offset)
+        tick = Decimal("0.01") if raw >= 1 else Decimal("0.0001")
+        return floor_step(raw, tick) if buy else ceil_step(raw, tick)
+
+    def _arm_sell_limit(self, symbol, reference, at_ns):
+        limit = self._limit_price(reference, buy=False)
+        self.sell_limits[symbol] = (
+            limit,
+            at_ns + self.execution.decision_latency_ms * 1_000_000,
+        )
+        self.write(
+            {
+                "kind": "sell_limit",
+                "available_at_ns": at_ns,
+                "available_at_ms": self._ms(at_ns),
+                "symbol": symbol,
+                "limit_price": limit,
+                "reason": self.exit_reasons[symbol],
+            }
+        )
+
+    def _check_day_limit_exit(self, symbol, trade, point, source_ns, available_ns):
+        if symbol not in self.sell_limits:
+            position = self.portfolio.positions[symbol]
+            if position.stop is not None and trade.price <= position.stop:
+                reason = "stop"
+            elif position.target is not None and trade.price >= position.target:
+                reason = "target"
+            else:
+                return
+            self.exit_due.add(symbol)
+            self.exit_reasons[symbol] = reason
+            self.exit_requested_at[symbol] = point
+            self._arm_sell_limit(symbol, trade.price, available_ns)
+            return
+        limit, ready = self.sell_limits[symbol]
+        if source_ns >= ready and self.costs.sell_price(trade.price) >= limit:
+            self._attempt_exit(symbol, trade, point)
+            if symbol not in self.portfolio.positions:
+                del self.sell_limits[symbol]

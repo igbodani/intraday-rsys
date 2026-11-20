@@ -37,7 +37,7 @@ def _windows_extended_path(path):
     return "\\\\?\\" + path
 
 
-def request_identity(symbol, day, feed, asof):
+def validate_stock_request(symbol, feed, asof):
     if not isinstance(symbol, str) or not re.fullmatch(
         r"[A-Z][A-Z0-9.\-]{0,14}", symbol
     ):
@@ -46,6 +46,10 @@ def request_identity(symbol, day, feed, asof):
         raise ValueError("Select sip or iex explicitly")
     if asof != "-" and date.fromisoformat(asof).isoformat() != asof:
         raise ValueError("Declare a canonical symbol-mapping date or '-'")
+
+
+def request_identity(symbol, day, feed, asof):
+    validate_stock_request(symbol, feed, asof)
     opening, closing = session_open_utc(day), session_close_utc(day)
     return {
         "symbols": symbol,

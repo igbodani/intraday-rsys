@@ -960,3 +960,14 @@ class TapePrint:
     updates_price: bool
     updates_volume: bool
     executable: bool
+
+
+@dataclass(frozen=True)
+class TapeHours:
+    """Boundaries in exchange-local minutes after midnight, end exclusive."""
+
+    data_open: int
+    data_close: int
+    order_open: int
+    order_close: int
+    regular_close: int
