@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from rsys.application.historical import plan_backtest
+from rsys.application.intrabar import plan_trade_tapes
 from rsys.application.models import ExperimentArm, ExperimentPlan
 
 ENTRY = {
@@ -29,6 +30,7 @@ def patch_axis(kind, path):
             "max_lookback_calendar_sessions",
             "min_dollar_volume",
             "max_current_bar_age_ms",
+            "max_price_age_ms",
         }
     ):
         return "scanner_profile"
@@ -99,7 +101,13 @@ def validate_experiment(raw, base, access_log, writer):
         raise ValueError(
             "Trial limit cannot cover all declared arms and external attempts"
         )
-    baseline = plan_backtest(base, access_log, writer)
+
+    def requests(config):
+        if plan.trade_pins is not None:
+            return plan_trade_tapes(config, access_log, replay=True)[2]
+        return plan_backtest(config, access_log, writer).requests
+
+    baseline = requests(base)
     arms = [ExperimentArm("baseline", deepcopy(base))]
     for variant in plan.variants:
         config, paths = deepcopy(base), []
@@ -116,8 +124,7 @@ def validate_experiment(raw, base, access_log, writer):
             target[path[-1]] = deepcopy(patch.value)
         if config == base:
             raise ValueError("Variant must change a setting")
-        candidate = plan_backtest(config, access_log, writer)
-        if candidate.requests != baseline.requests:
+        if requests(config) != baseline:
             raise ValueError("Changed history budget changes pinned data identity")
         arms.append(ExperimentArm(variant.name, config))
     return plan, arms

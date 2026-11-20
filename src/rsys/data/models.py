@@ -946,3 +946,17 @@ class MinuteGapCoverage:
 
     session_date: date
     selected_revisions: tuple[MinuteObservation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TapePrint:
+    """Provider time relative to the regular open, retaining nanosecond order."""
+
+    offset_ns: int
+    symbol: str
+    identity: str
+    price: Decimal
+    size: Decimal
+    updates_price: bool
+    updates_volume: bool
+    executable: bool

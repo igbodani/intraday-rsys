@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "study_id": "intrabar_orb_vwap_example",
+  "hypothesis": "Compare the account results of forming-bar ORB and VWAP on identical trade tapes.",
+  "study_kind": "complete_system",
+  "base_config": "intrabar-trades.local.json",
+  "trade_pins": "../runs/tape/trade-attempts/YOUR_DOWNLOAD_ID/pins.json",
+  "permitted_axis": "strategies",
+  "variants": [
+    {
+      "name": "vwap",
+      "changes": [
+        {"path": ["strategy", "strategy"], "value": "vwap_forming_confirm_v1"},
+        {"path": ["strategy", "strategy_config"], "value": {}}
+      ]
+    }
+  ],
+  "trial_limit": 2,
+  "counting": "all_execution_attempts",
+  "failure_policy": "continue",
+  "external_attempts": []
+}

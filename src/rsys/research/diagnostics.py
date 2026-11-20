@@ -410,6 +410,11 @@ class DiagnosticWriter:
         self._record.stage = _STAGE_RESOLVED
         self._write_invocation()
 
+    def link_trade_attempt(self, manifest_path: str) -> None:
+        self._record.linked_trade_attempt = manifest_path
+        self._record.stage = _STAGE_RESOLVED
+        self._write_invocation()
+
     def link_download_attempt(self, manifest_path: str) -> None:
         self._record.linked_download_attempt = manifest_path
         self._record.stage = _STAGE_RESOLVED

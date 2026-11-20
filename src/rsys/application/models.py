@@ -733,6 +733,7 @@ class ExperimentPlan(BaseModel):
         "scanner", "entry", "exit", "costs", "account", "complete_system"
     ]
     base_config: str = Field(min_length=1)
+    trade_pins: str | None = Field(default=None, min_length=1)
     variants: list[ExperimentVariant] = Field(min_length=1)
     permitted_axis: Literal[
         "scanner_profile",
