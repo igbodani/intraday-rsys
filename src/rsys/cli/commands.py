@@ -369,6 +369,46 @@ def _cmd_check_data(args):
     return EXIT_SUCCESS if result["can_execute"] else EXIT_DATA_ERROR
 
 
+def _cmd_tape(args):
+    from rsys.application.historical import load_request
+    from rsys.application.intrabar import run_tape_command
+    from rsys.research.diagnostics import invocation_scope
+
+    try:
+        with invocation_scope(args.out, command=args.command) as writer:
+            config, raw = load_request(args.config)
+            writer.record_identity(
+                input_path=str(args.config),
+                input_sha256=hashlib.sha256(raw).hexdigest(),
+            )
+            download = args.command == "trade-download"
+            watch = (
+                (lambda row: print(json.dumps(row, default=str), flush=True))
+                if getattr(args, "watch", False)
+                else None
+            )
+            path = run_tape_command(
+                config,
+                args.out,
+                acquire=download,
+                pins_path=getattr(args, "pins", None),
+                watch=watch,
+                invocation=writer,
+            )
+    except Exception as exc:  # noqa: BLE001 -- command boundary for retained failures
+        print(
+            f"error: {type(exc).__name__}: {getattr(exc, 'diagnostic_message', type(exc).__name__)}",
+            file=sys.stderr,
+        )
+        _print_attempt_paths(exc)
+        return EXIT_DATA_ERROR
+    print(f"manifest: {path / 'manifest.json'}")
+    print(
+        f"pins: {path / 'pins.json'}" if download else f"report: {path / 'report.html'}"
+    )
+    return EXIT_SUCCESS
+
+
 def _cmd_experiment(args):
     from rsys.application.experiment import run_experiment
 
@@ -535,6 +575,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", required=True, help="Output directory for comparison.json"
     )
     compare.set_defaults(func=_cmd_compare)
+
+    for name, help_text in (
+        ("trade-download", "Cache Alpaca stock trades for the selected session hours"),
+        (
+            "trade-backtest",
+            "Replay pinned trade tapes with an intrabar scanner and strategies",
+        ),
+    ):
+        cmd = subparsers.add_parser(name, help=help_text)
+        cmd.add_argument("--config", required=True)
+        cmd.add_argument("--out", required=True)
+        if name == "trade-backtest":
+            cmd.add_argument("--pins", required=True)
+            cmd.add_argument(
+                "--watch",
+                action="store_true",
+                help="Print scanner snapshots, bars and fills as replay progresses",
+            )
+        cmd.set_defaults(func=_cmd_tape)
 
     download = subparsers.add_parser(
         "download", help="Download Alpaca minute bars into a versioned local cache"

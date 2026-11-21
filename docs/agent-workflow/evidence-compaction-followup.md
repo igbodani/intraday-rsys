@@ -4,6 +4,8 @@
 BR-05 and experiment registry BR-06. No credentials or new research assumptions
 are needed to build it. Bound real-data pilots until this resource cost is addressed.
 
+The next [compact run evidence work order](compact-run-evidence-plan.md) addresses remaining decision duplication in manifests, session summaries and HTML. It preserves this completed history-archive implementation.
+
 ## Problem and evidence
 
 The BR-04 offline benchmark keeps the normal evidence path and all lookback dates.

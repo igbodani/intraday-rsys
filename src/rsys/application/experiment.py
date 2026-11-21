@@ -3,11 +3,13 @@
 import hashlib
 import json
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 
 from rsys.application.experiment_config import validate_experiment
 from rsys.application.file_attempt import file_attempt
 from rsys.application.historical import backtest, load_request
+from rsys.application.intrabar import run_tape_command
 from rsys.application.offline import deny_python_network
 from rsys.data.gaps import estimate_label
 from rsys.reporting.experiment import experiment_html, scorecard_metrics
@@ -24,6 +26,7 @@ from rsys.research.experiments import (
     compute_source_fingerprint,
     redact_secrets,
 )
+from rsys.research.inspection import inspect_attempt
 from rsys.research.models import ExperimentTrialContext
 from rsys.research.storage import canonical_hash, new_run_id
 from rsys.research.studies import StudyRegistry
@@ -46,8 +49,31 @@ def provenance():
     return compute_source_fingerprint()[0], compute_dependency_lock_hash()
 
 
+def _verified_trade_result(root, row, experiment):
+    attempt = Path(root) / "trade-attempts" / row["run_id"]
+    status = inspect_attempt(root, row["run_id"])
+    if status.outcome != "success" or status.completeness != "complete":
+        raise ValueError("Incomplete trade evidence")
+    if json.loads((attempt / "input.json").read_bytes()) != row["config"]:
+        raise ValueError("Trade settings differ from the declared arm")
+    if json.loads((attempt / "pins.json").read_bytes()) != experiment["trade_pins"]:
+        raise ValueError("Trade tapes differ from the frozen experiment")
+    data = json.loads((attempt / "result.json").read_bytes())
+    ctx = data["experiment"]
+    if (
+        ctx["plan_hash"] != experiment["plan_hash"]
+        or ctx["trial_id"] != row["trial_id"]
+        or ctx["arm"] != row["name"]
+        or data["code_hash"] != experiment["code_hash"]
+        or data["dependency_hash"] != experiment["dependency_hash"]
+    ):
+        raise ValueError("Trade arm provenance mismatch")
+    return data
+
+
 def build_scorecards(result, root, permitted_axis):
     baseline = result["arms"][0]
+    trade_baseline = None
     for row in result["arms"]:
         row["scorecard"] = {
             "status": "unavailable",
@@ -56,6 +82,32 @@ def build_scorecards(result, root, permitted_axis):
         if row["state"] != "success":
             continue
         try:
+            if "trade_pins" in result:
+                data = _verified_trade_result(root, row, result)
+                if row is baseline:
+                    trade_baseline = data
+                comparison = {"status": "unavailable", "reason": "baseline unavailable"}
+                if trade_baseline is not None:
+                    before = trade_baseline["metrics"]["ending_equity"]
+                    after = data["metrics"]["ending_equity"]
+                    comparison = {
+                        "status": "available",
+                        "result": {
+                            "run_a": baseline["run_id"],
+                            "run_b": row["run_id"],
+                            "ending_equity_delta": str(
+                                Decimal(after) - Decimal(before)
+                            ),
+                        },
+                    }
+                row["scorecard"] = {
+                    "status": "available",
+                    "estimate_label": data["estimate_label"],
+                    "metrics": scorecard_metrics(data, data),
+                    "calendar_year_results": data.get("calendar_year_results", []),
+                    "comparison": comparison,
+                }
+                continue
             manifest = load_run_manifest(Path(root), row["run_id"])
             metrics = json.loads(
                 (Path(root) / "attempts" / row["run_id"] / "metrics.json").read_text()
@@ -121,12 +173,23 @@ def run_experiment(path, out_dir):
         writer.use_config({"plan": raw, "base": base})
         atomic_write_json(attempt / "experiment.json", result)
         plan, arms = validate_experiment(raw, base, result["access_log"], writer)
-        result["estimate_label"] = estimate_label(base["dataset"]["feed"])
+        contract = {"plan": raw, "base": base}
+        trade_pins = None
+        if plan.trade_pins is not None:
+            # Freeze one snapshot for the parent and every child before reserving trials.
+            trade_pins = json.loads(
+                (Path(path).resolve().parent / plan.trade_pins).read_bytes()
+            )
+            if not isinstance(trade_pins, dict) or not trade_pins:
+                raise ValueError("Expected a nonempty trade pin map")
+            contract["trade_pins"] = result["trade_pins"] = trade_pins
+        feed = base["feed"] if trade_pins is not None else base["dataset"]["feed"]
+        result["estimate_label"] = estimate_label(feed)
         result["arms"] = [
             {"name": arm.name, "state": "not_started", "config": arm.config}
             for arm in arms
         ]
-        plan_hash = canonical_hash({"plan": raw, "base": base})
+        plan_hash = canonical_hash(contract)
         code, lock = provenance()
         result.update(
             plan_hash=plan_hash,
@@ -142,7 +205,7 @@ def run_experiment(path, out_dir):
         try:
             registry.register(
                 plan.study_id,
-                {"plan": raw, "base": base},
+                contract,
                 plan.trial_limit,
                 len(plan.external_attempts),
             )
@@ -178,21 +241,40 @@ def run_experiment(path, out_dir):
                 try:
                     atomic_write_json(attempt / "experiment.json", result)
                     child = start_invocation(
-                        root, command="experiment-arm", invocation_id=child_id
+                        root,
+                        command="trade-backtest"
+                        if trade_pins is not None
+                        else "experiment-arm",
+                        invocation_id=child_id,
                     )
                     with invocation_scope(
                         root, command="experiment-arm", invocation=child
                     ):
                         try:
                             with deny_python_network():
-                                _, run_id, trace, manifest = backtest(
-                                    arm.config,
-                                    json.dumps(arm.config).encode(),
-                                    root,
-                                    report=True,
-                                    invocation=child,
-                                    experiment_context=context,
-                                )
+                                if trade_pins is not None:
+                                    directory = run_tape_command(
+                                        arm.config,
+                                        root,
+                                        acquire=False,
+                                        pins=trade_pins,
+                                        invocation=child,
+                                        experiment_context=context,
+                                    )
+                                    run_id = directory.name
+                                    trace, manifest = (
+                                        directory / "events.jsonl.gz",
+                                        directory / "manifest.json",
+                                    )
+                                else:
+                                    _, run_id, trace, manifest = backtest(
+                                        arm.config,
+                                        json.dumps(arm.config).encode(),
+                                        root,
+                                        report=True,
+                                        invocation=child,
+                                        experiment_context=context,
+                                    )
                             row.update(
                                 run_id=run_id, manifest=str(manifest), trace=str(trace)
                             )

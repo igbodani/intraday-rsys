@@ -25,7 +25,7 @@ from rsys.research.storage import (
     owner_state,
     recovery_lock,
 )
-from rsys.research.trace import read_trace, verify_streamed_artifacts
+from rsys.research.trace import file_sha256, read_trace, verify_streamed_artifacts
 
 TERMINAL = frozenset({"success", "failed", "interrupted", "crashed"})
 
@@ -232,6 +232,7 @@ def _read_status(root, identity):
     linked = [
         (kind, path)
         for kind, path in (
+            ("trade-attempts", state.linked_trade_attempt),
             ("downloads", state.linked_download_attempt),
             ("preflights", state.linked_preflight_attempt),
             ("experiments", state.linked_experiment_attempt),
@@ -274,16 +275,26 @@ def _read_status(root, identity):
                 if seal.get("invocation_id") != state.invocation_id:
                     raise InspectionError("download invocation mismatch")
                 verify_diagnostic_seal(root, seal)
-                if kind in ("preflights", "provider-validations", "experiments"):
+                if kind in (
+                    "trade-attempts",
+                    "preflights",
+                    "provider-validations",
+                    "experiments",
+                ):
                     artifacts = manifest.get("artifacts", {})
                     required = {
                         {
+                            "trade-attempts": "result.json",
                             "preflights": "preflight.json",
                             "provider-validations": "validation.json",
                             "experiments": "experiment.json",
                         }[kind],
                         "report.html",
                     }
+                    if kind == "trade-attempts":
+                        required.update({"input.json", "pins.json"})
+                        if state.command == "trade-backtest":
+                            required.add("events.jsonl.gz")
                     if not isinstance(artifacts, dict) or not required <= set(
                         artifacts
                     ):
@@ -374,7 +385,7 @@ def inspect_attempt(root, identity):
 
 
 def _optional_hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+    return file_sha256(path) if path.exists() else None
 
 
 def _identities(root, identity):

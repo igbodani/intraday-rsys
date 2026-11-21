@@ -946,3 +946,28 @@ class MinuteGapCoverage:
 
     session_date: date
     selected_revisions: tuple[MinuteObservation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TapePrint:
+    """Provider time relative to the regular open, retaining nanosecond order."""
+
+    offset_ns: int
+    symbol: str
+    identity: str
+    price: Decimal
+    size: Decimal
+    updates_price: bool
+    updates_volume: bool
+    executable: bool
+
+
+@dataclass(frozen=True)
+class TapeHours:
+    """Boundaries in exchange-local minutes after midnight, end exclusive."""
+
+    data_open: int
+    data_close: int
+    order_open: int
+    order_close: int
+    regular_close: int
