@@ -62,7 +62,7 @@ def minute_flags(tape, conditions, *, extended=False):
 
 
 def normalize_tape(pages, params, *, classify=True, extended_window=None):
-    """Deduplicate rerendered pages by venue/ID. Conflicting identities fail."""
+    """Normalize final historical trades and verify overlapping page records."""
     if (
         not pages
         or "next_page_token" not in pages[-1]
@@ -102,13 +102,27 @@ def normalize_tape(pages, params, *, classify=True, extended_window=None):
                 or any(not n.is_finite() or n <= 0 for n in (price, size))
             ):
                 raise ValueError("Invalid print in trade tape")
-            key = (venue, seq)
-            signature = (stamp, price, size, tuple(sorted(conditions)), row["z"])
-            if key in seen:
-                if seen[key] != signature:
-                    raise ValueError("Conflicting trade identity")
+            update = row.get("u")
+            if update in ("incorrect", "canceled"):
                 continue
-            seen[key] = signature
+            if update not in (None, "corrected"):
+                raise ValueError(
+                    f"Unknown trade update for {symbol} at {row['t']}: {update!r}"
+                )
+            identity = f"{venue}:{seq}"
+            if venue == "D":
+                # FINRA reporting facilities reuse IDs within one symbol/session.
+                # Always qualify D IDs so a later print cannot rename an earlier one.
+                identity = f"{identity}@{stamp}"
+            signature = (stamp, price, size, tuple(sorted(conditions)), row["z"])
+            if identity in seen:
+                if seen[identity] != signature:
+                    raise ValueError(
+                        f"Conflicting trade identity for {symbol} at {row['t']}: "
+                        f"{identity} (first timestamp ns={seen[identity][0]})"
+                    )
+                continue
+            seen[identity] = signature
             if classify:
                 outside_regular = (
                     extended_window is not None
@@ -116,9 +130,7 @@ def normalize_tape(pages, params, *, classify=True, extended_window=None):
                 )
                 flags = minute_flags(row["z"], conditions, extended=outside_regular)
                 prints.append(
-                    TapePrint(
-                        stamp - start, symbol, f"{venue}:{seq}", price, size, *flags
-                    )
+                    TapePrint(stamp - start, symbol, identity, price, size, *flags)
                 )
     return sorted(prints, key=lambda p: (p.offset_ns, p.identity))
 

@@ -3,6 +3,8 @@
 import gzip
 import json
 from copy import deepcopy
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -10,7 +12,7 @@ import pytest
 from rsys.application.intrabar import run_tape_command
 from rsys.cli import main
 from rsys.data.alpaca import AlpacaTradesClient
-from rsys.data.trade_tape import minute_flags
+from rsys.data.trade_tape import minute_flags, normalize_tape, tape_request
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -473,3 +475,104 @@ def test_later_session_starts_with_shared_equity_and_a_fresh_strategy(tmp_path):
     assert first_cash != Decimal(cfg["account"]["initial_cash"])
     assert Decimal(second["ending_equity"]) == first_cash + second_pnl
     assert result["metrics"]["completed_trade_count"] == 2
+
+
+def test_download_and_replay_preserve_reused_finra_ids_across_pages(tmp_path):
+    cfg = config(tmp_path)
+    cfg["symbols"] = ["AAA"]
+    del cfg["action_review"]["BBB"]
+    cfg["feed"] = "sip"
+
+    def pages(params):
+        rows = market(params)["trades"]["AAA"]
+        for row in rows:
+            row.update(x="D", i=3439)
+        # Repeat the same print at the page boundary on both warmup and replay days.
+        if "page_token" in params:
+            return {"trades": {"AAA": rows[2:]}, "next_page_token": None}
+        return {"trades": {"AAA": rows[:3]}, "next_page_token": "more"}
+
+    pins = acquire(cfg, tmp_path, pages)
+    events, _, _ = replay(cfg, tmp_path, pins)
+    batches = [e for e in events if e["kind"] == "trade_batch"]
+    prints = [p for batch in batches for p in batch["prints"]]
+    assert len(prints) == len({p["identity"] for p in prints}) == 7
+    assert Decimal(batches[-1]["scanner"]["AAA"]["volume"]) == 128
+    buy, sell = [e for e in events if e["kind"] == "fill"]
+    assert buy["reference_id"].endswith(prints[5]["identity"])
+    assert sell["reference_id"].endswith(prints[6]["identity"])
+
+
+def test_finra_ids_use_exact_nanoseconds_and_ignore_equivalent_page_repeats():
+    req = tape_request("AAA", date(2024, 9, 12), "sip")
+    first = {
+        "t": "2024-09-12T13:30:00.000000001Z",
+        "x": "D",
+        "i": 7,
+        "c": ["@", "F"],
+        "p": "10",
+        "s": 10,
+        "z": "C",
+    }
+    duplicate = dict(first, t="2024-09-12T13:30:00.000000001+00:00", c=["F", "@"])
+    later = dict(first, t="2024-09-12T13:30:00.000000002Z", p="11")
+
+    def read(rows):
+        return normalize_tape([{"trades": {"AAA": rows}, "next_page_token": None}], req)
+
+    before = read([first])
+    result = read([later, duplicate, first])
+    assert result == read([first, later])
+    assert result[0] == before[0]
+    assert [p.offset_ns for p in result] == [1, 2]
+    assert result[0].identity != result[1].identity
+
+
+@pytest.mark.parametrize("venue", ["D", "V"])
+@pytest.mark.parametrize("classify", [True, False])
+def test_genuinely_conflicting_trade_still_fails_with_context(venue, classify):
+    req = tape_request("AAA", date(2024, 9, 12), "sip")
+    row = {
+        "t": "2024-09-12T13:30:00Z",
+        "x": venue,
+        "i": 7,
+        "c": ["@"],
+        "p": "10",
+        "s": 10,
+        "z": "C",
+    }
+    other = dict(row, s=11)
+    if venue != "D":
+        other["t"] = "2024-09-12T14:00:00Z"
+    pages = [
+        {"trades": {"AAA": [row]}, "next_page_token": "second"},
+        {"trades": {"AAA": [other]}, "next_page_token": None},
+    ]
+    with pytest.raises(
+        ValueError, match=rf"Conflicting trade identity.*AAA.*2024-09-12.*{venue}:7"
+    ):
+        normalize_tape(pages, req, classify=classify)
+
+
+def test_trade_update_markers_do_not_replay_invalid_versions():
+    req = tape_request("AAA", date(2024, 9, 12), "sip")
+    row = {
+        "t": "2024-09-12T13:30:00Z",
+        "x": "D",
+        "i": 7,
+        "c": ["@"],
+        "p": "10",
+        "s": 10,
+        "z": "C",
+    }
+    rows = [
+        dict(row, u="incorrect"),
+        dict(row, u="corrected", p="11"),
+        dict(row, i=8, u="canceled"),
+    ]
+    page = {"trades": {"AAA": rows}, "next_page_token": None}
+    (valid,) = normalize_tape([page], req)
+    assert valid.price == 11
+    rows.append(dict(row, i=9, u="unexpected"))
+    with pytest.raises(ValueError, match="Unknown trade update"):
+        normalize_tape([page], req, classify=False)
